@@ -1,11 +1,18 @@
 import json
 from typing import Any
 
+import pytest
 from test_state import XML
 
 from jev_android_mcp import benchmark, jev
 from jev_android_mcp.models import Observation
 from jev_android_mcp.state import parse_observation
+
+
+@pytest.fixture(autouse=True)
+def _local_provider_credentials(monkeypatch):
+    keys = {"typesafe": "typesafe-test-key", "openrouter": "openrouter-test-key"}
+    monkeypatch.setattr(jev, "resolve_api_key", lambda provider, env_name: keys[provider])
 
 
 def test_choose_uses_only_the_selected_operation_target(monkeypatch) -> None:
@@ -127,6 +134,81 @@ def test_backend_selection_keeps_both_options_available(monkeypatch) -> None:
     monkeypatch.setenv("JEV_BACKEND", "auto")
     assert jev._select_backend() == ("openrouter", "openrouter-test-key")
 
+
+def test_backend_selection_resolves_only_the_selected_provider(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def resolve(provider: str, env_name: str) -> str | None:
+        calls.append(provider)
+        return "key"
+
+    monkeypatch.setattr(jev, "resolve_api_key", resolve)
+    assert jev._select_backend("typesafe") == ("typesafe", "key")
+    assert calls == ["typesafe"]
+
+
+def test_openrouter_sends_compact_actions_and_maps_short_target(monkeypatch) -> None:
+    observation = parse_observation(XML, "emulator-5554")
+    captured: dict[str, Any] = {}
+
+    class FakeResponse:
+        status_code = 200
+        is_error = False
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {
+                "model": "test-model",
+                "choices": [{"message": {"content": '{"operation":"TAP","target":"t0"}'}}],
+            }
+
+    def fake_post(url, *, json, **kwargs):
+        captured.update(json=json)
+        return FakeResponse()
+
+    monkeypatch.setenv("JEV_BACKEND", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(jev.httpx, "post", fake_post)
+    decision = jev.choose(
+        observation,
+        "Open the library",
+        [{"operation": "DONE", "result": "completion_rejected"}],
+    )
+
+    content = captured["json"]["messages"][1]["content"]
+    prompt = json.loads(content)
+    tap = next(action for action in observation.actions if action.operation == "TAP")
+    assert decision["action_id"] == tap.id
+    assert "elements" not in prompt["state"]
+    assert set(prompt["targets"]) == {"TAP", "TYPE_TEXT", "SCROLL"}
+    assert prompt["targets"]["TAP"][0] == {"id": "t0", "label": "Search"}
+    assert prompt["state"]["recent_actions"][0]["result"] == "completion_rejected"
+    assert len(content) < len(json.dumps(observation.model_dump(mode="json")))
+
+
+def test_openrouter_rejects_target_from_another_operation(monkeypatch) -> None:
+    observation = parse_observation(XML, "emulator-5554")
+
+    class FakeResponse:
+        status_code = 200
+        is_error = False
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {
+                "choices": [{"message": {"content": '{"operation":"TYPE_TEXT","target":"t0"}'}}]
+            }
+
+    monkeypatch.setenv("JEV_BACKEND", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(jev.httpx, "post", lambda *args, **kwargs: FakeResponse())
+
+    try:
+        jev.choose(observation, "Enter a search", [])
+    except jev.JevError as exc:
+        assert "unoffered target" in str(exc)
+    else:
+        raise AssertionError("cross-operation short target must be rejected")
 
 def test_matched_decision_records_latency_without_executing(monkeypatch) -> None:
     observation = parse_observation(XML, "emulator-5554")

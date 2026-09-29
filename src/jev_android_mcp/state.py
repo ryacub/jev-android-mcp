@@ -65,31 +65,41 @@ def _node_label(node: UiNode) -> str:
     return label if len(label) <= 160 else f"{label[:157]}..."
 
 
-def _action_label(node: UiNode, nodes: list[UiNode]) -> str:
+def _action_label(node: UiNode, descendant_labels: dict[str, list[str]]) -> str:
     """Prefer semantic text nested inside Compose-style clickable containers."""
 
     direct = node.content_description.strip() or node.text.strip()
-    descendant_labels: list[str] = []
-    prefix = f"{node.path}/"
-    for candidate in nodes:
-        if not candidate.path.startswith(prefix):
-            continue
-        label = candidate.content_description.strip() or candidate.text.strip()
-        if label and label not in descendant_labels:
-            descendant_labels.append(label)
+    labels = descendant_labels.get(node.path, [])
     if direct:
-        labels = [direct, *[label for label in descendant_labels if label != direct]]
-    elif descendant_labels:
-        labels = descendant_labels
-    else:
+        labels = [direct, *[label for label in labels if label != direct]]
+    elif not labels:
         labels = [node.label.strip()]
     return _node_label(node.model_copy(update={"text": " · ".join(labels)}))
 
 
 def _actions(nodes: list[UiNode], observation_id: str) -> list[Action]:
     actions: list[Action] = []
+    descendant_labels: dict[str, list[str]] = {}
+    descendant_label_sets: dict[str, set[str]] = {}
+    actionable_paths = {
+        node.path
+        for node in nodes
+        if node.enabled and node.has_area and (node.clickable or node.editable or node.scrollable)
+    }
+    for candidate in nodes:
+        label = candidate.content_description.strip() or candidate.text.strip()
+        if not label:
+            continue
+        path = candidate.path.rpartition("/")[0]
+        while path:
+            if path in actionable_paths:
+                labels = descendant_label_sets.setdefault(path, set())
+                if label not in labels:
+                    labels.add(label)
+                    descendant_labels.setdefault(path, []).append(label)
+            path = path.rpartition("/")[0]
     for node in nodes:
-        label = _action_label(node, nodes)
+        label = _action_label(node, descendant_labels)
         if not label or not node.enabled or not node.has_area:
             continue
         if node.clickable:

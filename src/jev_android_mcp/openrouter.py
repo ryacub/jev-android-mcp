@@ -18,6 +18,7 @@ def field_text(
     observation: Observation,
     action: Action,
     history: list[dict[str, Any]],
+    http_client: httpx.Client | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Generate exactly one field value; never guess when the key is absent."""
 
@@ -51,7 +52,8 @@ def field_text(
         ],
     }
     try:
-        response = httpx.post(
+        post = http_client.post if http_client is not None else httpx.post
+        response = post(
             "https://openrouter.ai/api/v1/chat/completions",
             json=body,
             headers={"Authorization": f"Bearer {api_key}"},

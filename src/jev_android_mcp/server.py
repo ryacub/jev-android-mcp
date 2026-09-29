@@ -105,13 +105,19 @@ def android_observe(serial: str | None = None) -> dict[str, Any]:
     """Read the current UIAutomator hierarchy without taking a screenshot."""
 
     client = _client(serial)
+    capture_started = time.perf_counter()
     xml = client.ui_hierarchy_xml()
+    capture_ms = round((time.perf_counter() - capture_started) * 1000)
+    parse_started = time.perf_counter()
     observation = parse_observation(xml, client.serial or "unknown")
+    parse_ms = round((time.perf_counter() - parse_started) * 1000)
     if observation.package not in _allowed_packages() | SYSTEM_PACKAGES:
         raise AdbError(
             f"Observed package is outside the configured boundary: {observation.package}"
         )
-    return _observation_payload(_remember(observation))
+    return _observation_payload(_remember(observation)) | {
+        "_timings_ms": {"capture_ms": capture_ms, "parse_ms": parse_ms}
+    }
 
 
 def _find_action(observation: Observation, action_id: str) -> Action:
@@ -132,8 +138,12 @@ def _find_node(observation: Observation, node_id: str | None):
 
 def _next_observation(client: AdbClient) -> dict[str, Any] | None:
     try:
+        capture_started = time.perf_counter()
         xml = client.ui_hierarchy_xml()
+        capture_ms = round((time.perf_counter() - capture_started) * 1000)
+        parse_started = time.perf_counter()
         observation = parse_observation(xml, client.serial or "unknown")
+        parse_ms = round((time.perf_counter() - parse_started) * 1000)
         if observation.package not in _allowed_packages() | SYSTEM_PACKAGES:
             raise AdbError(
                 f"Observed package is outside the configured boundary: {observation.package}"
@@ -141,7 +151,9 @@ def _next_observation(client: AdbClient) -> dict[str, Any] | None:
     except AdbError as exc:
         LOGGER.warning("Unable to capture post-action observation: %s", exc)
         return None
-    return _observation_payload(_remember(observation))
+    return _observation_payload(_remember(observation)) | {
+        "_timings_ms": {"capture_ms": capture_ms, "parse_ms": parse_ms}
+    }
 
 
 @mcp.tool(annotations=MUTATING)
@@ -167,6 +179,7 @@ def android_act(
     action = _find_action(cached, action_id)
     node = _find_node(cached, action.node_id)
 
+    action_started = time.perf_counter()
     if action.operation == "TAP":
         if node is None:
             raise ValueError("TAP action has no node")
@@ -200,15 +213,26 @@ def android_act(
     else:
         raise ValueError(f"Unsupported action operation: {action.operation}")
 
+    action_ms = round((time.perf_counter() - action_started) * 1000)
+    wait_started = time.perf_counter()
     if wait_seconds:
         time.sleep(wait_seconds)
+    wait_ms = round((time.perf_counter() - wait_started) * 1000)
+    capture_started = time.perf_counter()
     next_state = _next_observation(client) if action.operation not in {"DONE", "BLOCKED"} else None
+    observation_timings = next_state.pop("_timings_ms", {}) if next_state else {}
     return {
         "status": "completed",
         "observation_id": observation_id,
         "action_id": action_id,
         "operation": action.operation,
         "next_observation": next_state,
+        "timings_ms": {
+            "action_ms": action_ms,
+            "wait_ms": wait_ms,
+            **{f"post_action_{key}": value for key, value in observation_timings.items()},
+            "post_action_capture_parse_ms": round((time.perf_counter() - capture_started) * 1000),
+        },
     }
 
 
@@ -257,6 +281,8 @@ def android_run(
     serial: str | None = None,
     max_steps: int = 12,
     backend: Literal["auto", "typesafe", "openrouter"] = "auto",
+    text_by_resource_id: dict[str, str] | None = None,
+    wait_seconds: float = 0.5,
 ) -> dict[str, Any]:
     """Run a bounded screenshot-free Jev loop against the configured Android app."""
 
@@ -270,6 +296,8 @@ def android_run(
             backend=backend,
             http_client=http_client,
             completion_oracle=completion_oracle_for_goal(goal),
+            text_by_resource_id=text_by_resource_id,
+            wait_seconds=wait_seconds,
         )
 
 

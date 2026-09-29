@@ -38,20 +38,22 @@ def _select_backend(requested_override: str | None = None) -> tuple[str, str]:
     """Select an explicitly requested backend or resolve the automatic fallback."""
 
     requested = (requested_override or os.environ.get("JEV_BACKEND", "auto")).strip().lower()
-    typesafe_key = resolve_api_key("typesafe", "TYPESAFE_API_KEY")
-    openrouter_key = resolve_api_key("openrouter", "OPENROUTER_API_KEY")
     if requested not in {"auto", "typesafe", "openrouter"}:
         raise JevError("JEV_BACKEND must be auto, typesafe, or openrouter")
     if requested == "typesafe":
+        typesafe_key = resolve_api_key("typesafe", "TYPESAFE_API_KEY")
         if not typesafe_key:
             raise JevError("JEV_BACKEND=typesafe requires TYPESAFE_API_KEY")
         return "typesafe", typesafe_key
     if requested == "openrouter":
+        openrouter_key = resolve_api_key("openrouter", "OPENROUTER_API_KEY")
         if not openrouter_key:
             raise JevError("JEV_BACKEND=openrouter requires a Pi auth entry or OPENROUTER_API_KEY")
         return "openrouter", openrouter_key
+    openrouter_key = resolve_api_key("openrouter", "OPENROUTER_API_KEY")
     if openrouter_key:
         return "openrouter", openrouter_key
+    typesafe_key = resolve_api_key("typesafe", "TYPESAFE_API_KEY")
     if typesafe_key:
         return "typesafe", typesafe_key
     raise JevError(
@@ -93,6 +95,22 @@ def _post_openrouter(
 ) -> dict[str, Any]:
     """Use OpenRouter as a temporary Jev-compatible choice backend."""
 
+    action_ids: dict[str, dict[str, str]] = {}
+    compact_actions: dict[str, list[dict[str, str]]] = {}
+    for operation in sorted(TARGET_OPERATIONS):
+        key = f"{operation.lower()}_target"
+        question = body["questions"].get(key)
+        if question is None:
+            continue
+        action_ids[operation] = {}
+        compact_actions[operation] = []
+        prefix = {"TAP": "t", "TYPE_TEXT": "e", "SCROLL": "s"}[operation]
+        for index, (action_id, candidate) in enumerate(question["criteria"].items()):
+            short_id = f"{prefix}{index}"
+            action_ids[operation][short_id] = action_id
+            compact_actions[operation].append(
+                {"id": short_id, "label": candidate["element"].split("] ", 1)[-1]}
+            )
     request = {
         "model": os.environ.get("OPENROUTER_DECISION_MODEL", "openai/gpt-5.6-luna"),
         "reasoning": {
@@ -117,13 +135,15 @@ def _post_openrouter(
                 "content": json.dumps(
                     {
                         "goal": body["questions"]["operation"]["instructions"]["goal"],
-                        "state": body["state"],
-                        "operations": body["questions"]["operation"]["criteria"],
-                        "targets": {
-                            key: value["criteria"]
-                            for key, value in body["questions"].items()
-                            if key != "operation"
+                        "state": {
+                            "app": body["state"]["app"],
+                            "activity": body["state"]["activity"],
+                            "rotation": body["state"]["rotation"],
+                            "recent_actions": body["state"]["recent_actions"],
                         },
+                        "operations": body["questions"]["operation"]["criteria"],
+                        "rules": body["questions"]["operation"]["instructions"]["rules"],
+                        "targets": compact_actions,
                     },
                     separators=(",", ":"),
                 ),
@@ -168,9 +188,12 @@ def _post_openrouter(
     }
     if operation in TARGET_OPERATIONS:
         target_key = f"{operation.lower()}_target"
+        # Provider sees compact local IDs; only map them for the selected operation.
+        reverse_map = action_ids[operation]
         candidate_ids = set(body["questions"][target_key]["criteria"])
-        if target not in candidate_ids:
+        if target not in reverse_map:
             raise JevError("OpenRouter selected an unoffered target; no Android action executed")
+        target = reverse_map[target]
         answers[target_key] = {
             "choice": target,
             "probabilities": {choice: 1.0 if choice == target else 0.0 for choice in candidate_ids},
@@ -229,10 +252,11 @@ def choose(
     history: list[dict[str, Any]],
     backend: str | None = None,
     http_client: httpx.Client | None = None,
+    backend_auth: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
     """Ask Jev for one operation and, when needed, one observed target."""
 
-    selected_backend, api_key = _select_backend(backend)
+    selected_backend, api_key = backend_auth or _select_backend(backend)
     targets, controls = _action_space(observation)
     operations = {
         operation: OPERATION_LABELS[operation]

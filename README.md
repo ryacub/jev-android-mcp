@@ -27,6 +27,10 @@ one action from that exact observation ID, including taps, text entry, scroll,
 Back, Home, and fixed portrait/landscape rotation. `android_run` runs a bounded
 Jev loop. It independently verifies Home and orientation goals; application-
 specific completion checks can be supplied by callers through `run_jev`.
+Each run resolves its selected provider credentials once. Run traces include
+decision, text-helper, action, wait, and post-action capture/parse timings; the
+initial credential and hierarchy capture/parse timings appear in
+`setup_timings_ms`.
 `android_reset` requires `confirm=true` because it clears the configured app's
 data. The configured app and known Android system surfaces are allowed; other
 packages are rejected.
@@ -70,10 +74,14 @@ Literal and environment-backed auth-file keys are supported. The Pi macOS
 form `!security find-generic-password ...` is supported through an allowlisted,
 non-shell Keychain invocation; arbitrary auth-file commands are rejected.
 
-`TYPE_TEXT` is optional and never guessed. If the policy selects it, the same
-OpenRouter key is used; the default helper model is `inception/mercury-2.5`
-and can be changed with `OPENROUTER_TEXT_MODEL`. Keys are read from
-environment variables and are never written to traces.
+`TYPE_TEXT` can use an explicit `text_by_resource_id` mapping on `android_run`;
+the resource ID must identify one currently focused editable field. This avoids
+the separate text-generation request. If no caller value is supplied, the
+optional OpenRouter helper model (`inception/mercury-2.5`, configurable with
+`OPENROUTER_TEXT_MODEL`) can provide a value from the goal. Supplied values are
+not added to per-step trace fields, although visible text can appear in normal
+observations and the returned final observation. The `wait_seconds` argument
+defaults to 0.5 and can be set from 0 through 5 seconds.
 
 The MCP process must keep stdout reserved for protocol traffic. Diagnostics
 belong on stderr through Python logging.

@@ -1,10 +1,17 @@
 from typing import Any
 
+import pytest
 from test_state import XML
 
 from jev_android_mcp import agent
 from jev_android_mcp.completion import selected_tab_completion
 from jev_android_mcp.state import parse_observation
+
+
+@pytest.fixture(autouse=True)
+def _local_provider_credentials(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(agent, "_select_backend", lambda backend=None: ("openrouter", "test-key"))
 
 
 def _state(xml: str, package: str = "com.example.reader") -> dict[str, Any]:
@@ -254,3 +261,161 @@ def test_run_jev_passes_requested_backend_to_jev(monkeypatch) -> None:
 
     assert result["status"] == "done"
     assert calls == ["openrouter"]
+
+
+def test_run_jev_uses_caller_text_for_unique_focused_resource_id(monkeypatch) -> None:
+    field_xml = XML.replace(
+        'resource-id="" class="android.widget.EditText"',
+        'resource-id="app:id/query" class="android.widget.EditText"',
+        1,
+    )
+    state = _state(field_xml)
+    field_id = next(
+        action["id"]
+        for action in state["actions"]
+        if action["operation"] == "TYPE_TEXT"
+    )
+    typed: list[dict[str, Any]] = []
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(
+        agent,
+        "choose",
+        lambda *args, **kwargs: {
+            "action_id": field_id,
+            "operation": "TYPE_TEXT",
+            "latency_ms": 3,
+            "confidence": 1.0,
+        },
+    )
+    monkeypatch.setattr(
+        agent,
+        "field_text",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("helper must be skipped")),
+    )
+
+    result = agent.run_jev(
+        "Search for The Hobbit",
+        lambda **kwargs: state,
+        lambda **kwargs: typed.append(kwargs) or {
+            "next_observation": state,
+            "timings_ms": {"wait_ms": 500, "action_ms": 1},
+        },
+        backend="openrouter",
+        text_by_resource_id={"app:id/query": "The Hobbit"},
+    )
+
+    assert typed[0]["text"] == "The Hobbit"
+    assert typed[0]["wait_seconds"] == 0.5
+    assert result["trace"][0]["text_source"] == "caller"
+    assert result["setup_timings_ms"]["credentials_ms"] >= 0
+    assert "setup_timings_ms" not in result["trace"][0]
+    assert "wait_ms" in result["trace"][0]["timings_ms"]
+
+
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_run_jev_rejects_unfocused_or_ambiguous_text_target(monkeypatch, ambiguous: bool) -> None:
+    xml = XML.replace(
+        'resource-id="" class="android.widget.EditText"',
+        'resource-id="app:id/query" class="android.widget.EditText"',
+        1,
+    )
+    state = _state(xml)
+    field = next(node for node in state["nodes"] if node["class_name"].endswith("EditText"))
+    if ambiguous:
+        duplicate = dict(field, id="node-99", path="0/9")
+        state["nodes"].append(duplicate)
+    else:
+        field["focused"] = False
+    action = next(action for action in state["actions"] if action["operation"] == "TYPE_TEXT")
+    monkeypatch.setattr(
+        agent,
+        "choose",
+        lambda *args, **kwargs: {
+            "action_id": action["id"],
+            "operation": "TYPE_TEXT",
+            "latency_ms": 1,
+            "confidence": 1.0,
+        },
+    )
+    executed: list[dict[str, Any]] = []
+
+    result = agent.run_jev(
+        "Search for The Hobbit",
+        lambda **kwargs: state,
+        lambda **kwargs: executed.append(kwargs) or {},
+        text_by_resource_id={"app:id/query": "The Hobbit"},
+    )
+
+    assert result["status"] == "blocked"
+    assert not executed
+    assert "ambiguous" in result["reason"] if ambiguous else "focused" in result["reason"]
+
+
+def test_run_jev_resolves_credentials_once_for_multiple_steps(monkeypatch) -> None:
+    state = _state(XML)
+    credentials: list[str | None] = []
+    decisions = iter(("WAIT", "DONE"))
+    monkeypatch.setattr(
+        agent,
+        "_select_backend",
+        lambda backend=None: credentials.append(backend) or ("openrouter", "test-key"),
+    )
+    def choose(*args, **kwargs):
+        operation = next(decisions)
+        action = next(action for action in state["actions"] if action["operation"] == operation)
+        return {
+            "action_id": action["id"],
+            "operation": operation,
+            "latency_ms": 1,
+            "confidence": 1.0,
+        }
+
+    monkeypatch.setattr(agent, "choose", choose)
+
+    result = agent.run_jev(
+        "Finish the task",
+        lambda **kwargs: state,
+        lambda **kwargs: {"next_observation": state, "timings_ms": {"wait_ms": 0}},
+        max_steps=2,
+    )
+
+    assert result["status"] == "done"
+    assert credentials == [None]
+
+
+def test_run_jev_passes_shared_http_client_to_text_helper_and_records_fallback_timings(
+    monkeypatch,
+) -> None:
+    state = _state(XML)
+    action = next(action for action in state["actions"] if action["operation"] == "TYPE_TEXT")
+    client = object()
+    received: list[object] = []
+    observed = iter((state, state | {"_timings_ms": {"capture_ms": 7, "parse_ms": 2}}))
+    monkeypatch.setattr(
+        agent,
+        "choose",
+        lambda *args, **kwargs: {
+            "action_id": action["id"],
+            "operation": "TYPE_TEXT",
+            "latency_ms": 1,
+            "confidence": 1.0,
+        },
+    )
+
+    def text_helper(*args, http_client=None, **kwargs):
+        received.append(http_client)
+        return "The Hobbit", {"model": "test-helper"}
+
+    monkeypatch.setattr(agent, "field_text", text_helper)
+    result = agent.run_jev(
+        "Search for The Hobbit",
+        lambda **kwargs: next(observed),
+        lambda **kwargs: {},
+        http_client=client,
+        max_steps=1,
+    )
+
+    assert received == [client]
+    assert result["trace"][0]["timings_ms"]["capture_ms"] == 7
+    assert result["trace"][0]["timings_ms"]["parse_ms"] == 2
