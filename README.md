@@ -35,11 +35,17 @@ initial credential and hierarchy capture/parse timings appear in
 data. The configured app and known Android system surfaces are allowed; other
 packages are rejected.
 
-Configure the app under test before starting the server:
+Configure the apps under test before starting the server. The value is one
+package or a comma-separated list. The first package is the default for
+`android_launch`, `android_reset`, and `android_logcat`; each of them also
+takes a `package` argument from the list.
 
 ```bash
-export ANDROID_APP_PACKAGE=com.example.app
+export ANDROID_APP_PACKAGE=com.example.app,com.example.app.dev
 ```
+
+When the foreground app is not in the list, `android_observe` returns an error
+that names the foreground package and the configured list.
 
 For the Jev loop, OpenRouter is the default provider when configured:
 

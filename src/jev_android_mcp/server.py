@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import re
 import time
-from typing import Any, Literal
+from collections.abc import Callable
+from typing import Any, Literal, TypeVar
 
 import httpx
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from jev_android_mcp.adb import AdbClient, AdbError
@@ -67,15 +70,49 @@ def _observation_payload(observation: Any) -> dict[str, Any]:
     return observation.model_dump(mode="json")
 
 
+def _configured_packages() -> list[str]:
+    packages = [entry.strip() for entry in os.environ.get(PACKAGE_ENV, "").split(",")]
+    invalid = [package for package in packages if not PACKAGE_PATTERN.fullmatch(package)]
+    if invalid:
+        raise ValueError(
+            f"{PACKAGE_ENV} must be a comma-separated list of valid Android package names; "
+            f"invalid entries: {invalid}"
+        )
+    return packages
+
+
 def _configured_package() -> str:
-    package = os.environ.get(PACKAGE_ENV, "").strip()
-    if not PACKAGE_PATTERN.fullmatch(package):
-        raise ValueError(f"{PACKAGE_ENV} must be a valid Android package name")
-    return package
+    return _configured_packages()[0]
 
 
 def _allowed_packages() -> set[str]:
-    return {_configured_package()}
+    return set(_configured_packages())
+
+
+def _check_boundary(observation: Observation) -> Observation:
+    if observation.package not in _allowed_packages() | SYSTEM_PACKAGES:
+        raise AdbError(
+            f"Foreground package {observation.package} is not in {PACKAGE_ENV} "
+            f"({', '.join(_configured_packages())}). "
+            f"Add it to {PACKAGE_ENV} and restart the server."
+        )
+    return observation
+
+
+Tool = TypeVar("Tool", bound=Callable[..., Any])
+
+
+def _report_failures(tool: Tool) -> Tool:
+    """Return expected failures as ToolError, because MCP hides the text of any other exception."""
+
+    @functools.wraps(tool)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return tool(*args, **kwargs)
+        except (AdbError, ValueError) as exc:
+            raise ToolError(str(exc)) from exc
+
+    return wrapper  # type: ignore[return-value]
 
 
 def _remember(observation: Observation) -> Observation:
@@ -85,7 +122,9 @@ def _remember(observation: Observation) -> Observation:
 
 def _validate_package(package: str) -> str:
     if not PACKAGE_PATTERN.fullmatch(package) or package not in _allowed_packages():
-        raise ValueError(f"Package is outside the configured allowlist: {package}")
+        raise ValueError(
+            f"Package {package} is not in {PACKAGE_ENV} ({', '.join(_configured_packages())})"
+        )
     return package
 
 
@@ -94,6 +133,7 @@ def _client(serial: str | None) -> AdbClient:
 
 
 @mcp.tool(annotations=READ_ONLY)
+@_report_failures
 def device_list() -> list[dict[str, str]]:
     """List connected Android devices and their connection state."""
 
@@ -101,6 +141,7 @@ def device_list() -> list[dict[str, str]]:
 
 
 @mcp.tool(annotations=READ_ONLY)
+@_report_failures
 def android_observe(serial: str | None = None) -> dict[str, Any]:
     """Read the current UIAutomator hierarchy without taking a screenshot."""
 
@@ -111,10 +152,7 @@ def android_observe(serial: str | None = None) -> dict[str, Any]:
     parse_started = time.perf_counter()
     observation = parse_observation(xml, client.serial or "unknown")
     parse_ms = round((time.perf_counter() - parse_started) * 1000)
-    if observation.package not in _allowed_packages() | SYSTEM_PACKAGES:
-        raise AdbError(
-            f"Observed package is outside the configured boundary: {observation.package}"
-        )
+    _check_boundary(observation)
     return _observation_payload(_remember(observation)) | {
         "_timings_ms": {"capture_ms": capture_ms, "parse_ms": parse_ms}
     }
@@ -144,10 +182,7 @@ def _next_observation(client: AdbClient) -> dict[str, Any] | None:
         parse_started = time.perf_counter()
         observation = parse_observation(xml, client.serial or "unknown")
         parse_ms = round((time.perf_counter() - parse_started) * 1000)
-        if observation.package not in _allowed_packages() | SYSTEM_PACKAGES:
-            raise AdbError(
-                f"Observed package is outside the configured boundary: {observation.package}"
-            )
+        _check_boundary(observation)
     except AdbError as exc:
         LOGGER.warning("Unable to capture post-action observation: %s", exc)
         return None
@@ -157,6 +192,7 @@ def _next_observation(client: AdbClient) -> dict[str, Any] | None:
 
 
 @mcp.tool(annotations=MUTATING)
+@_report_failures
 def android_act(
     observation_id: str,
     action_id: str,
@@ -237,6 +273,7 @@ def android_act(
 
 
 @mcp.tool(annotations=MUTATING)
+@_report_failures
 def android_launch(package: str | None = None, serial: str | None = None) -> dict[str, str]:
     """Launch an app's launcher activity."""
 
@@ -246,6 +283,7 @@ def android_launch(package: str | None = None, serial: str | None = None) -> dic
 
 
 @mcp.tool(annotations=DESTRUCTIVE)
+@_report_failures
 def android_reset(
     package: str | None = None,
     serial: str | None = None,
@@ -263,11 +301,16 @@ def android_reset(
 
 
 @mcp.tool(annotations=READ_ONLY)
-def android_logcat(lines: int = 100, serial: str | None = None) -> dict[str, str | int]:
+@_report_failures
+def android_logcat(
+    lines: int = 100,
+    serial: str | None = None,
+    package: str | None = None,
+) -> dict[str, str | int]:
     """Return a bounded recent logcat tail for diagnostics."""
 
     bounded_lines = max(1, min(lines, 1000))
-    package = _configured_package()
+    package = _validate_package(package or _configured_package())
     return {
         "lines": bounded_lines,
         "package": package,
@@ -276,6 +319,7 @@ def android_logcat(lines: int = 100, serial: str | None = None) -> dict[str, str
 
 
 @mcp.tool(annotations=MUTATING)
+@_report_failures
 def android_run(
     goal: str,
     serial: str | None = None,

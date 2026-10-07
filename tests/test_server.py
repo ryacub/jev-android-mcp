@@ -1,10 +1,12 @@
+import asyncio
 from dataclasses import dataclass, field
 
 import pytest
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 from test_state import XML
 
 from jev_android_mcp import server
-from jev_android_mcp.adb import Device
+from jev_android_mcp.adb import AdbError, Device
 from jev_android_mcp.state import parse_observation
 
 
@@ -116,3 +118,67 @@ def test_device_list_preserves_adb_device_state(monkeypatch) -> None:
     assert server.device_list() == [
         {"serial": "emulator-5554", "state": "device", "details": "model:test"}
     ]
+
+
+def _call_tool(name: str, arguments: dict) -> object:
+    return asyncio.run(server.mcp.call_tool(name, arguments))
+
+
+def test_package_env_accepts_a_comma_separated_list(monkeypatch) -> None:
+    monkeypatch.setenv("ANDROID_APP_PACKAGE", "com.example.reader, com.example.reader.dev")
+
+    assert server._configured_package() == "com.example.reader"
+    assert server._allowed_packages() == {"com.example.reader", "com.example.reader.dev"}
+    assert server._validate_package("com.example.reader.dev") == "com.example.reader.dev"
+
+
+def test_package_env_rejects_an_invalid_list_entry(monkeypatch) -> None:
+    monkeypatch.setenv("ANDROID_APP_PACKAGE", "com.example.reader,not a package")
+    with pytest.raises(ValueError, match="not a package"):
+        server._allowed_packages()
+
+
+def test_observe_accepts_any_listed_package(monkeypatch) -> None:
+    _prepare(monkeypatch)
+    monkeypatch.setenv("ANDROID_APP_PACKAGE", "com.example.other,com.example.reader")
+
+    assert server.android_observe(serial="emulator-5554")["package"] == "com.example.reader"
+
+
+def test_observe_error_names_foreground_and_allowed_packages(monkeypatch) -> None:
+    _prepare(monkeypatch)
+    monkeypatch.setenv("ANDROID_APP_PACKAGE", "com.example.release,com.example.dev")
+
+    with pytest.raises(ToolError) as caught:
+        _call_tool("android_observe", {"serial": "emulator-5554"})
+
+    assert not isinstance(caught.value, UnexpectedToolError)
+    message = str(caught.value)
+    assert "com.example.reader" in message
+    assert "com.example.release, com.example.dev" in message
+
+
+def test_adb_failure_text_reaches_the_client(monkeypatch) -> None:
+    _prepare(monkeypatch)
+
+    def offline(serial):
+        raise AdbError("device emulator-5554 is offline")
+
+    monkeypatch.setattr(server, "_client", offline)
+
+    with pytest.raises(ToolError, match="device emulator-5554 is offline") as caught:
+        _call_tool("android_observe", {"serial": "emulator-5554"})
+    assert not isinstance(caught.value, UnexpectedToolError)
+
+
+def test_logcat_accepts_a_listed_package(monkeypatch) -> None:
+    monkeypatch.setenv("ANDROID_APP_PACKAGE", "com.example.reader,com.example.reader.dev")
+
+    class LogClient:
+        def logcat(self, package: str, lines: int) -> str:
+            return f"{package}:{lines}"
+
+    monkeypatch.setattr(server, "_client", lambda serial: LogClient())
+
+    result = server.android_logcat(lines=5, package="com.example.reader.dev")
+    assert result["text"] == "com.example.reader.dev:5"
