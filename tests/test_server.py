@@ -30,6 +30,10 @@ class FakeClient:
         self.calls.append(("swipe", (x1, y1, x2, y2, duration_ms)))
         return ""
 
+    def press_enter(self) -> str:
+        self.calls.append(("press_enter", ()))
+        return ""
+
     def back(self) -> str:
         self.calls.append(("back", ()))
         return ""
@@ -76,6 +80,7 @@ def _action(observation: dict, operation: str) -> dict:
         ("TAP", None, "up", "tap"),
         ("TYPE_TEXT", "hello", "up", "type_text"),
         ("SCROLL", None, "down", "swipe"),
+        ("PRESS_ENTER", None, "up", "press_enter"),
         ("BACK", None, "up", "back"),
         ("HOME", None, "up", "home"),
         ("ROTATE_PORTRAIT", None, "up", "rotate"),

@@ -187,6 +187,12 @@ class AdbClient:
             except AdbError:
                 raise AdbError("adb input text failed") from None
 
+    def press_enter(self) -> str:
+        """Send Enter to the currently focused Android control."""
+
+        with self.locked():
+            return self.shell("input", "keyevent", "KEYCODE_ENTER")
+
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> str:
         """Swipe between two coordinates on the selected device."""
 

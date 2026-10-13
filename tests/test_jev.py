@@ -177,9 +177,12 @@ def test_openrouter_sends_compact_actions_and_maps_short_target(monkeypatch) -> 
 
     content = captured["json"]["messages"][1]["content"]
     prompt = json.loads(content)
+    system_prompt = captured["json"]["messages"][0]["content"]
     tap = next(action for action in observation.actions if action.operation == "TAP")
     assert decision["action_id"] == tap.id
     assert "elements" not in prompt["state"]
+    assert "PRESS_ENTER" in prompt["operations"]
+    assert "PRESS_ENTER" in system_prompt
     assert set(prompt["targets"]) == {"TAP", "TYPE_TEXT", "SCROLL"}
     assert prompt["targets"]["TAP"][0] == {"id": "t0", "label": "Search"}
     assert prompt["state"]["recent_actions"][0]["result"] == "completion_rejected"

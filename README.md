@@ -24,9 +24,11 @@ uv run jev-android-mcp
 
 `android_observe` returns indexed accessibility state. `android_act` executes
 one action from that exact observation ID, including taps, text entry, scroll,
-Back, Home, and fixed portrait/landscape rotation. `android_run` runs a bounded
-Jev loop. It independently verifies Home and orientation goals; application-
-specific completion checks can be supplied by callers through `run_jev`.
+Enter, Back, Home, and fixed portrait/landscape rotation. Use `PRESS_ENTER`
+after `TYPE_TEXT` when the focused field submits through the keyboard action.
+`android_run` runs a bounded Jev loop. It independently verifies Home and
+orientation goals. Callers can supply application-specific completion checks
+through `run_jev`.
 Each run resolves its selected provider credentials once. Run traces include
 decision, text-helper, action, wait, and post-action capture/parse timings; the
 initial credential and hierarchy capture/parse timings appear in

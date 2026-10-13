@@ -38,10 +38,10 @@ mcp = MCPServer(
     "Jev Android MCP",
     instructions=(
         "Use android_observe before android_act. Actions are bound to one "
-        "observation ID. android_act supports Home and fixed portrait/landscape "
-        "rotation. android_reset clears the configured app data and requires "
-        "confirm=true. The server uses UIAutomator state only; screenshots "
-        "are not captured or sent to models."
+        "observation ID. android_act supports Enter, Home, and fixed "
+        "portrait/landscape rotation. android_reset clears the configured app "
+        "data and requires confirm=true. The server uses UIAutomator state only; "
+        "screenshots are not captured or sent to models."
     ),
 )
 _OBSERVATIONS: dict[str, Observation] = {}
@@ -236,6 +236,8 @@ def android_act(
             client.swipe(x, bottom, x, top)
         else:
             client.swipe(x, top, x, bottom)
+    elif action.operation == "PRESS_ENTER":
+        client.press_enter()
     elif action.operation == "BACK":
         client.back()
     elif action.operation == "HOME":

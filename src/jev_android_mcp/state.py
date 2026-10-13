@@ -135,6 +135,12 @@ def _actions(nodes: list[UiNode], observation_id: str) -> list[Action]:
     actions.extend(
         [
             Action(
+                id=f"{observation_id}:PRESS_ENTER",
+                observation_id=observation_id,
+                operation="PRESS_ENTER",
+                label="Press Enter on the focused control",
+            ),
+            Action(
                 id=f"{observation_id}:BACK",
                 observation_id=observation_id,
                 operation="BACK",

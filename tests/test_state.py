@@ -38,6 +38,7 @@ def test_parse_observation_builds_compact_action_space() -> None:
         "TAP",
         "TYPE_TEXT",
         "SCROLL",
+        "PRESS_ENTER",
         "BACK",
         "HOME",
         "ROTATE_PORTRAIT",
