@@ -90,6 +90,7 @@ def _video_surface_label(node: UiNode) -> str:
     return f"Video surface ({resource_name})" if resource_name else "Video surface"
 
 
+PINNED_PATH = "pip"
 PINNED_TASK = re.compile(r"\* Task\{.*\bA=\d+:(?P<package>[\w.]+) .*\bmode=pinned\b")
 PINNED_BOUNDS = re.compile(
     r"mBounds=Rect\((\d+), (\d+) - (\d+), (\d+)\).*\bmWindowingMode=pinned\b"
@@ -117,7 +118,7 @@ def pinned_window(activity_dump: str) -> tuple[str, Bounds] | None:
 def _pinned_node(index: int, package: str, bounds: Bounds) -> UiNode:
     return UiNode(
         id=f"node-{index}",
-        path="pip",
+        path=PINNED_PATH,
         content_description=f"Picture-in-picture window ({package})",
         class_name="PictureInPictureWindow",
         package=package,
@@ -169,6 +170,16 @@ def _actions(nodes: list[UiNode], observation_id: str) -> list[Action]:
                     operation="TAP",
                     node_id=node.id,
                     label=_video_surface_label(node),
+                )
+            )
+        if node.path == PINNED_PATH:
+            actions.append(
+                Action(
+                    id=f"{observation_id}:expand_pip:{node.id}",
+                    observation_id=observation_id,
+                    operation="EXPAND_PIP",
+                    node_id=node.id,
+                    label="Expand the picture-in-picture window to full screen",
                 )
             )
         if node.editable:

@@ -32,16 +32,20 @@ SYSTEM_PACKAGES = {
     "com.google.android.apps.nexuslauncher",
     "com.android.launcher3",
 }
+# The first tap opens the system PiP menu, whose full-screen button sits at the
+# window center and hides after a few seconds. The gap must exceed the double-tap
+# timeout, or the system reads a resize gesture.
+PIP_MENU_DELAY_SECONDS = 0.6
 PACKAGE_PATTERN = re.compile(r"^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$")
 
 mcp = MCPServer(
     "Jev Android MCP",
     instructions=(
         "Use android_observe before android_act. Actions are bound to one "
-        "observation ID. android_act supports Enter, Home, and fixed "
-        "portrait/landscape rotation. android_reset clears the configured app "
-        "data and requires confirm=true. The server uses UIAutomator state only; "
-        "screenshots are not captured or sent to models."
+        "observation ID. android_act supports Enter, Home, fixed "
+        "portrait/landscape rotation, and a one-call picture-in-picture expand. "
+        "android_reset clears the configured app data and requires confirm=true. "
+        "The server uses UIAutomator state only; screenshots are not captured or sent to models."
     ),
 )
 _OBSERVATIONS: dict[str, Observation] = {}
@@ -235,6 +239,15 @@ def android_act(
         x = (node.bounds.left + node.bounds.right) // 2
         y = (node.bounds.top + node.bounds.bottom) // 2
         client.tap(x, y)
+    elif action.operation == "EXPAND_PIP":
+        if node is None:
+            raise ValueError("EXPAND_PIP action has no node")
+        x = (node.bounds.left + node.bounds.right) // 2
+        y = (node.bounds.top + node.bounds.bottom) // 2
+        client.tap(x, y)
+        time.sleep(PIP_MENU_DELAY_SECONDS)
+        if _allowed_pinned_window(client) is not None:
+            client.tap(x, y)
     elif action.operation == "TYPE_TEXT":
         if text is None:
             raise ValueError("TYPE_TEXT requires text")

@@ -209,3 +209,19 @@ def test_pinned_window_gets_a_tap_action() -> None:
     node = next(node for node in observation.nodes if node.id == taps[0].node_id)
     assert node.bounds == pinned[1]
     assert observation.package == parse_observation(XML, "emulator-5554").package
+
+
+def test_pinned_window_gets_an_expand_action() -> None:
+    pinned = ("com.example.reader", Bounds(left=440, top=1959, right=1038, bottom=2295))
+
+    expands = [
+        action
+        for action in parse_observation(XML, "emulator-5554", pinned=pinned).actions
+        if action.operation == "EXPAND_PIP"
+    ]
+
+    assert len(expands) == 1
+    assert all(
+        action.operation != "EXPAND_PIP"
+        for action in parse_observation(XML, "emulator-5554").actions
+    )

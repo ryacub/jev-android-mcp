@@ -7,6 +7,7 @@ from test_state import PINNED_DUMPSYS, XML
 
 from jev_android_mcp import server
 from jev_android_mcp.adb import AdbError, Device
+from jev_android_mcp.models import Bounds
 from jev_android_mcp.state import parse_observation
 
 
@@ -224,3 +225,35 @@ def test_observe_survives_a_failed_activity_dump(monkeypatch) -> None:
     monkeypatch.setattr(client, "activity_dump", broken)
 
     assert _pip_taps(server.android_observe()) == []
+
+
+PINNED = ("com.example.reader", Bounds(left=440, top=1959, right=1038, bottom=2295))
+PINNED_CENTER = (739, 2127)
+
+
+def _expand_pip(monkeypatch, activities: str) -> FakeClient:
+    client, _ = _prepare(monkeypatch)
+    client.activities = activities
+    observation = server._remember(parse_observation(XML, "emulator-5554", pinned=PINNED))
+    monkeypatch.setattr(server.time, "sleep", lambda seconds: None)
+    action = next(action for action in observation.actions if action.operation == "EXPAND_PIP")
+
+    server.android_act(
+        observation_id=observation.observation_id,
+        action_id=action.id,
+        wait_seconds=0,
+        serial="emulator-5554",
+    )
+    return client
+
+
+def test_expand_pip_taps_the_menu_center_while_the_window_stays_pinned(monkeypatch) -> None:
+    client = _expand_pip(monkeypatch, PINNED_DUMPSYS)
+
+    assert client.calls == [("tap", PINNED_CENTER), ("tap", PINNED_CENTER)]
+
+
+def test_expand_pip_stops_after_one_tap_when_the_window_is_no_longer_pinned(monkeypatch) -> None:
+    client = _expand_pip(monkeypatch, "")
+
+    assert client.calls == [("tap", PINNED_CENTER)]
