@@ -16,12 +16,25 @@ class FakeClient:
     serial: str = "emulator-5554"
     calls: list[tuple[str, tuple[object, ...]]] = field(default_factory=list)
     activities: str = ""
+    screens: list[str | Exception] = field(default_factory=list)
+    start_output: str = "Starting: Intent { act=android.intent.action.VIEW }"
 
     def activity_dump(self) -> str:
         return self.activities
 
     def ui_hierarchy_xml(self, timeout: float = 30.0) -> str:
-        return XML
+        screen = self.screens.pop(0) if len(self.screens) > 1 else (self.screens or [XML])[0]
+        if isinstance(screen, Exception):
+            raise screen
+        return screen
+
+    def press_keys(self, keycode: str, repeat: int) -> str:
+        self.calls.append(("press_keys", (keycode, repeat)))
+        return ""
+
+    def open_uri(self, uri: str, package: str) -> str:
+        self.calls.append(("open_uri", (uri, package)))
+        return self.start_output
 
     def tap(self, x: int, y: int) -> str:
         self.calls.append(("tap", (x, y)))

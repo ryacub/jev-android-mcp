@@ -198,6 +198,20 @@ class AdbClient:
         with self.locked():
             return self.shell("input", "keyevent", "KEYCODE_ENTER")
 
+    def press_keys(self, keycode: str, repeat: int) -> str:
+        """Send one key event code one or more times in a single input command."""
+
+        with self.locked():
+            return self.shell("input", "keyevent", *([keycode] * repeat))
+
+    def open_uri(self, uri: str, package: str) -> str:
+        """Start a VIEW intent for a URI that only the given package can receive."""
+
+        with self.locked():
+            return self.shell(
+                "am", "start", "-W", "-a", "android.intent.action.VIEW", "-d", uri, "-p", package
+            )
+
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> str:
         """Swipe between two coordinates on the selected device."""
 

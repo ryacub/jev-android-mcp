@@ -14,7 +14,7 @@ import httpx
 
 from .jev import JevError, choose
 from .models import Observation
-from .server import android_observe
+from .server import _observe
 
 
 def matched_decision(
@@ -152,13 +152,13 @@ def run_matched_trials(
         http_client = httpx.Client(http2=True) if condition == "warm" else None
         try:
             for _ in range(warmup if condition == "warm" else 0):
-                observation = Observation.model_validate(android_observe(serial=serial))
+                observation = Observation.model_validate(_observe(serial=serial))
                 for backend in backends:
                     matched_decision(observation, goal, backend, http_client=http_client)
             for trial in range(1, repeats + 1):
                 started = time.perf_counter()
                 capture_started = time.perf_counter()
-                observation = Observation.model_validate(android_observe(serial=serial))
+                observation = Observation.model_validate(_observe(serial=serial))
                 capture_latency_ms = round((time.perf_counter() - capture_started) * 1000)
                 for backend in backends:
                     record = matched_decision(

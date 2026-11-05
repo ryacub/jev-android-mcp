@@ -22,10 +22,24 @@ uv run mypy src
 uv run jev-android-mcp
 ```
 
-`android_observe` returns indexed accessibility state. `android_act` executes
-one action from that exact observation ID, including taps, text entry, scroll,
-Enter, Back, Home, and fixed portrait/landscape rotation. Use `PRESS_ENTER`
-after `TYPE_TEXT` when the focused field submits through the keyboard action.
+`android_observe` returns indexed accessibility state. By default it is
+compact: actions with their labels, plus `screen_text`, the visible text of the
+screen. Pass `detail="full"` to get every node. `android_act`, `android_run`,
+and the tools below take the same `detail` argument.
+
+`android_act` executes one action from that exact observation ID, including
+taps, text entry, scroll, Enter, Back, Home, and fixed portrait/landscape
+rotation. `scroll_direction` names the finger movement: `up`, `down`, `left`,
+or `right`. Use `PRESS_ENTER` after `TYPE_TEXT` when the focused field submits
+through the keyboard action. A picture-in-picture window of a configured app
+appears as a node with a tap action and an `EXPAND_PIP` action.
+
+`android_press_key` sends one allowlisted key, such as `SPACE`, `DEL`, a D-pad
+key, or a media key, and can repeat it. It also needs a current observation ID.
+`android_open_uri` opens a deep link with a VIEW intent limited to a configured
+package, so no other app can receive it. `android_wait_for` polls until a text
+appears, or with `absent=true` until it is gone, and returns an observation that
+`android_act` accepts.
 `android_run` runs a bounded Jev loop. It independently verifies Home and
 orientation goals. Callers can supply application-specific completion checks
 through `run_jev`.

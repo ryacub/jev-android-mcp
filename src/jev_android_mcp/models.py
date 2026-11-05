@@ -80,7 +80,7 @@ class ActionRequest(BaseModel):
     observation_id: str
     action_id: str
     text: str | None = None
-    scroll_direction: Literal["up", "down"] = "up"
+    scroll_direction: Literal["up", "down", "left", "right"] = "up"
     wait_seconds: float = Field(default=0.5, ge=0.0, le=5.0)
 
 
