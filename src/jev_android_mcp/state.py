@@ -77,6 +77,18 @@ def _action_label(node: UiNode, descendant_labels: dict[str, list[str]]) -> str:
     return _node_label(node.model_copy(update={"text": " · ".join(labels)}))
 
 
+VIDEO_SURFACE_CLASSES = {"android.view.SurfaceView", "android.view.TextureView"}
+
+
+def _is_video_surface(node: UiNode) -> bool:
+    return node.class_name in VIDEO_SURFACE_CLASSES
+
+
+def _video_surface_label(node: UiNode) -> str:
+    resource_name = node.resource_id.rpartition("/")[2]
+    return f"Video surface ({resource_name})" if resource_name else "Video surface"
+
+
 def _actions(nodes: list[UiNode], observation_id: str) -> list[Action]:
     actions: list[Action] = []
     descendant_labels: dict[str, list[str]] = {}
@@ -110,6 +122,16 @@ def _actions(nodes: list[UiNode], observation_id: str) -> list[Action]:
                     operation="TAP",
                     node_id=node.id,
                     label=label,
+                )
+            )
+        elif _is_video_surface(node):
+            actions.append(
+                Action(
+                    id=f"{observation_id}:tap:{node.id}",
+                    observation_id=observation_id,
+                    operation="TAP",
+                    node_id=node.id,
+                    label=_video_surface_label(node),
                 )
             )
         if node.editable:

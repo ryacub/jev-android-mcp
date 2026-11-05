@@ -126,3 +126,41 @@ def test_password_content_description_is_redacted_before_observation() -> None:
 
     assert all(node.content_description != "secret-value" for node in observation.nodes)
     assert all("secret-value" not in action.label for action in observation.actions)
+
+
+def test_video_surface_gets_a_tap_action_without_clickable() -> None:
+    xml = XML.replace(
+        '<node index="2" text="" resource-id="" class="android.widget.ScrollView"',
+        '<node index="3" text="" resource-id="app:id/player_surface" class="android.view.SurfaceView"'
+        ' package="com.example.reader" clickable="false" enabled="true"'
+        ' focusable="false" focused="false" scrollable="false"'
+        ' checkable="false" checked="false" selected="false" password="false"'
+        ' bounds="[0,0][2400,1080]" />\n'
+        '    <node index="2" text="" resource-id="" class="android.widget.ScrollView"',
+    )
+
+    observation = parse_observation(xml, "emulator-5554")
+
+    surface_taps = [
+        action
+        for action in observation.actions
+        if action.operation == "TAP" and "Video surface" in action.label
+    ]
+    assert len(surface_taps) == 1
+    assert "player_surface" in surface_taps[0].label
+
+
+def test_zero_area_video_surface_is_not_an_action() -> None:
+    xml = XML.replace(
+        '<node index="2" text="" resource-id="" class="android.widget.ScrollView"',
+        '<node index="3" text="" resource-id="" class="android.view.TextureView"'
+        ' package="com.example.reader" clickable="false" enabled="true"'
+        ' focusable="false" focused="false" scrollable="false"'
+        ' checkable="false" checked="false" selected="false" password="false"'
+        ' bounds="[0,0][0,0]" />\n'
+        '    <node index="2" text="" resource-id="" class="android.widget.ScrollView"',
+    )
+
+    observation = parse_observation(xml, "emulator-5554")
+
+    assert not any("Video surface" in action.label for action in observation.actions)
