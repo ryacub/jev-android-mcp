@@ -1,4 +1,5 @@
-from jev_android_mcp.state import parse_observation
+from jev_android_mcp.models import Bounds
+from jev_android_mcp.state import parse_observation, pinned_window
 
 XML = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
 <hierarchy rotation="0">
@@ -131,7 +132,8 @@ def test_password_content_description_is_redacted_before_observation() -> None:
 def test_video_surface_gets_a_tap_action_without_clickable() -> None:
     xml = XML.replace(
         '<node index="2" text="" resource-id="" class="android.widget.ScrollView"',
-        '<node index="3" text="" resource-id="app:id/player_surface" class="android.view.SurfaceView"'
+        '<node index="3" text="" resource-id="app:id/player_surface"'
+        ' class="android.view.SurfaceView"'
         ' package="com.example.reader" clickable="false" enabled="true"'
         ' focusable="false" focused="false" scrollable="false"'
         ' checkable="false" checked="false" selected="false" password="false"'
@@ -164,3 +166,46 @@ def test_zero_area_video_surface_is_not_an_action() -> None:
     observation = parse_observation(xml, "emulator-5554")
 
     assert not any("Video surface" in action.label for action in observation.actions)
+
+
+PINNED_DUMPSYS = "\n".join(
+    [
+        "ACTIVITY MANAGER ACTIVITIES (dumpsys activity activities)",
+        "  * Task{65f465f #80 type=standard A=10225:com.example.reader U=0"
+        " visible=true mode=pinned translucent=false sz=1}",
+        "    mLastPausedActivity: ActivityRecord{1 u0 com.example.reader/.PlayerActivity t80}",
+        "        mOverrideConfig={1.0 winConfig={ mBounds=Rect(440, 1959 - 1038, 2295)"
+        " mAppBounds=Rect(440, 1959 - 1038, 2295) mWindowingMode=pinned}}",
+        "  * Task{c04fa30 #79 type=standard A=10225:com.example.reader U=0"
+        " visible=true mode=fullscreen translucent=false sz=1}",
+        "        mOverrideConfig={1.0 winConfig={ mBounds=Rect(0, 0 - 1080, 2400)"
+        " mWindowingMode=fullscreen}}",
+    ]
+)
+
+
+def test_pinned_window_reads_package_and_bounds() -> None:
+    assert pinned_window(PINNED_DUMPSYS) == (
+        "com.example.reader",
+        Bounds(left=440, top=1959, right=1038, bottom=2295),
+    )
+
+
+def test_pinned_window_is_none_without_a_pinned_task() -> None:
+    assert pinned_window(PINNED_DUMPSYS.replace("mode=pinned", "mode=fullscreen")) is None
+
+
+def test_pinned_window_gets_a_tap_action() -> None:
+    pinned = ("com.example.reader", Bounds(left=440, top=1959, right=1038, bottom=2295))
+
+    observation = parse_observation(XML, "emulator-5554", pinned=pinned)
+
+    taps = [
+        action
+        for action in observation.actions
+        if action.operation == "TAP" and "Picture-in-picture window" in action.label
+    ]
+    assert len(taps) == 1
+    node = next(node for node in observation.nodes if node.id == taps[0].node_id)
+    assert node.bounds == pinned[1]
+    assert observation.package == parse_observation(XML, "emulator-5554").package

@@ -116,6 +116,11 @@ class AdbClient:
         # untrusted values as operators or additional commands.
         return self.run(("shell", shlex.join(args)), timeout=timeout)
 
+    def activity_dump(self) -> str:
+        """Return the activity manager task dump, which lists windowing modes."""
+
+        return self.shell("dumpsys", "activity", "activities")
+
     def ui_hierarchy_xml(self, timeout: float = 30.0) -> str:
         """Capture the current UIAutomator hierarchy."""
 

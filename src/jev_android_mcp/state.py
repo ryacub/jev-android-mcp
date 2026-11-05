@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
@@ -87,6 +88,42 @@ def _is_video_surface(node: UiNode) -> bool:
 def _video_surface_label(node: UiNode) -> str:
     resource_name = node.resource_id.rpartition("/")[2]
     return f"Video surface ({resource_name})" if resource_name else "Video surface"
+
+
+PINNED_TASK = re.compile(r"\* Task\{.*\bA=\d+:(?P<package>[\w.]+) .*\bmode=pinned\b")
+PINNED_BOUNDS = re.compile(
+    r"mBounds=Rect\((\d+), (\d+) - (\d+), (\d+)\).*\bmWindowingMode=pinned\b"
+)
+
+
+def pinned_window(activity_dump: str) -> tuple[str, Bounds] | None:
+    """Return the package and bounds of the pinned task in a dumpsys activity dump.
+
+    UIAutomator dumps only the active window, so a picture-in-picture window never
+    appears in the hierarchy.
+    """
+
+    package = None
+    for line in activity_dump.splitlines():
+        if package is None:
+            if task := PINNED_TASK.search(line):
+                package = task["package"]
+        elif bounds := PINNED_BOUNDS.search(line):
+            left, top, right, bottom = (int(value) for value in bounds.groups())
+            return package, Bounds(left=left, top=top, right=right, bottom=bottom)
+    return None
+
+
+def _pinned_node(index: int, package: str, bounds: Bounds) -> UiNode:
+    return UiNode(
+        id=f"node-{index}",
+        path="pip",
+        content_description=f"Picture-in-picture window ({package})",
+        class_name="PictureInPictureWindow",
+        package=package,
+        bounds=bounds,
+        clickable=True,
+    )
 
 
 def _actions(nodes: list[UiNode], observation_id: str) -> list[Action]:
@@ -242,7 +279,12 @@ def _fingerprint(
     return hashlib.sha256(encoded).hexdigest()[:20]
 
 
-def parse_observation(xml: str, serial: str, activity: str | None = None) -> Observation:
+def parse_observation(
+    xml: str,
+    serial: str,
+    activity: str | None = None,
+    pinned: tuple[str, Bounds] | None = None,
+) -> Observation:
     """Parse a UIAutomator XML dump into a compact, indexed observation."""
 
     try:
@@ -257,6 +299,8 @@ def parse_observation(xml: str, serial: str, activity: str | None = None) -> Obs
         package = next((node.package for node in nodes if node.package), "")
     rotation_text = root.attrib.get("rotation")
     rotation = int(rotation_text) if rotation_text and rotation_text.isdigit() else None
+    if pinned:
+        nodes.append(_pinned_node(len(nodes), *pinned))
     return Observation(
         serial=serial,
         observation_id=observation_id,

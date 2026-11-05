@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
-from test_state import XML
+from test_state import PINNED_DUMPSYS, XML
 
 from jev_android_mcp import server
 from jev_android_mcp.adb import AdbError, Device
@@ -14,6 +14,10 @@ from jev_android_mcp.state import parse_observation
 class FakeClient:
     serial: str = "emulator-5554"
     calls: list[tuple[str, tuple[object, ...]]] = field(default_factory=list)
+    activities: str = ""
+
+    def activity_dump(self) -> str:
+        return self.activities
 
     def ui_hierarchy_xml(self, timeout: float = 30.0) -> str:
         return XML
@@ -187,3 +191,36 @@ def test_logcat_accepts_a_listed_package(monkeypatch) -> None:
 
     result = server.android_logcat(lines=5, package="com.example.reader.dev")
     assert result["text"] == "com.example.reader.dev:5"
+
+
+def _pip_taps(payload: dict) -> list[dict]:
+    return [
+        action
+        for action in payload["actions"]
+        if action["operation"] == "TAP" and "Picture-in-picture window" in action["label"]
+    ]
+
+
+def test_observe_offers_a_tap_on_an_allowed_pinned_window(monkeypatch) -> None:
+    client, _ = _prepare(monkeypatch)
+    client.activities = PINNED_DUMPSYS
+
+    assert len(_pip_taps(server.android_observe())) == 1
+
+
+def test_observe_ignores_a_pinned_window_of_another_package(monkeypatch) -> None:
+    client, _ = _prepare(monkeypatch)
+    client.activities = PINNED_DUMPSYS.replace("com.example.reader", "com.example.other")
+
+    assert _pip_taps(server.android_observe()) == []
+
+
+def test_observe_survives_a_failed_activity_dump(monkeypatch) -> None:
+    client, _ = _prepare(monkeypatch)
+
+    def broken() -> str:
+        raise AdbError("dumpsys failed")
+
+    monkeypatch.setattr(client, "activity_dump", broken)
+
+    assert _pip_taps(server.android_observe()) == []

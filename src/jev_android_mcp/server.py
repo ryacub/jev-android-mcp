@@ -18,7 +18,7 @@ from mcp.types import ToolAnnotations
 from jev_android_mcp.adb import AdbClient, AdbError
 from jev_android_mcp.agent import completion_oracle_for_goal, run_jev
 from jev_android_mcp.models import Action, Observation
-from jev_android_mcp.state import parse_observation
+from jev_android_mcp.state import parse_observation, pinned_window
 
 LOGGER = logging.getLogger(__name__)
 PACKAGE_ENV = "ANDROID_APP_PACKAGE"
@@ -128,6 +128,15 @@ def _validate_package(package: str) -> str:
     return package
 
 
+def _allowed_pinned_window(client: AdbClient):
+    try:
+        pinned = pinned_window(client.activity_dump())
+    except AdbError as exc:
+        LOGGER.warning("Unable to read pinned windows: %s", exc)
+        return None
+    return pinned if pinned and pinned[0] in _allowed_packages() else None
+
+
 def _client(serial: str | None) -> AdbClient:
     return AdbClient(AdbClient.resolve_serial(serial))
 
@@ -150,7 +159,9 @@ def android_observe(serial: str | None = None) -> dict[str, Any]:
     xml = client.ui_hierarchy_xml()
     capture_ms = round((time.perf_counter() - capture_started) * 1000)
     parse_started = time.perf_counter()
-    observation = parse_observation(xml, client.serial or "unknown")
+    observation = parse_observation(
+        xml, client.serial or "unknown", pinned=_allowed_pinned_window(client)
+    )
     parse_ms = round((time.perf_counter() - parse_started) * 1000)
     _check_boundary(observation)
     return _observation_payload(_remember(observation)) | {
@@ -180,7 +191,9 @@ def _next_observation(client: AdbClient) -> dict[str, Any] | None:
         xml = client.ui_hierarchy_xml()
         capture_ms = round((time.perf_counter() - capture_started) * 1000)
         parse_started = time.perf_counter()
-        observation = parse_observation(xml, client.serial or "unknown")
+        observation = parse_observation(
+            xml, client.serial or "unknown", pinned=_allowed_pinned_window(client)
+        )
         parse_ms = round((time.perf_counter() - parse_started) * 1000)
         _check_boundary(observation)
     except AdbError as exc:
