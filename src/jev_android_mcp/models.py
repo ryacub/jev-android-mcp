@@ -33,6 +33,7 @@ class UiNode(BaseModel):
     bounds: Bounds
     enabled: bool = True
     clickable: bool = False
+    long_clickable: bool = False
     focusable: bool = False
     focused: bool = False
     scrollable: bool = False

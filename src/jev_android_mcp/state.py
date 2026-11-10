@@ -51,6 +51,7 @@ def _node(element: ET.Element, index: int, path: str) -> UiNode:
         bounds=_bounds(attrs.get("bounds")),
         enabled=_boolean(attrs.get("enabled"), True),
         clickable=_boolean(attrs.get("clickable")),
+        long_clickable=_boolean(attrs.get("long-clickable")),
         focusable=_boolean(attrs.get("focusable")),
         focused=_boolean(attrs.get("focused")),
         scrollable=_boolean(attrs.get("scrollable")),
@@ -134,7 +135,9 @@ def _actions(nodes: list[UiNode], observation_id: str) -> list[Action]:
     actionable_paths = {
         node.path
         for node in nodes
-        if node.enabled and node.has_area and (node.clickable or node.editable or node.scrollable)
+        if node.enabled
+        and node.has_area
+        and (node.clickable or node.long_clickable or node.editable or node.scrollable)
     }
     for candidate in nodes:
         label = candidate.content_description.strip() or candidate.text.strip()
@@ -170,6 +173,16 @@ def _actions(nodes: list[UiNode], observation_id: str) -> list[Action]:
                     operation="TAP",
                     node_id=node.id,
                     label=_video_surface_label(node),
+                )
+            )
+        if node.long_clickable:
+            actions.append(
+                Action(
+                    id=f"{observation_id}:long_press:{node.id}",
+                    observation_id=observation_id,
+                    operation="LONG_PRESS",
+                    node_id=node.id,
+                    label=label,
                 )
             )
         if node.path == PINNED_PATH:

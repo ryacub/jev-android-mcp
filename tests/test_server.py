@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
-from test_state import PINNED_DUMPSYS, XML
+from test_state import LONG_CLICKABLE_XML, PINNED_DUMPSYS, XML
 
 from jev_android_mcp import server
 from jev_android_mcp.adb import AdbError, Device
@@ -38,6 +38,10 @@ class FakeClient:
 
     def tap(self, x: int, y: int) -> str:
         self.calls.append(("tap", (x, y)))
+        return ""
+
+    def long_press(self, x: int, y: int) -> str:
+        self.calls.append(("long_press", (x, y)))
         return ""
 
     def type_text(self, text: str) -> str:
@@ -270,3 +274,20 @@ def test_expand_pip_stops_after_one_tap_when_the_window_is_no_longer_pinned(monk
     client = _expand_pip(monkeypatch, "")
 
     assert client.calls == [("tap", PINNED_CENTER)]
+
+
+def test_long_press_holds_the_node_center(monkeypatch) -> None:
+    client, _ = _prepare(monkeypatch)
+    observation = parse_observation(LONG_CLICKABLE_XML, "emulator-5554")
+    server._remember(observation)
+    action = next(action for action in observation.actions if action.operation == "LONG_PRESS")
+
+    result = server.android_act(
+        observation_id=observation.observation_id,
+        action_id=action.id,
+        wait_seconds=0,
+        serial="emulator-5554",
+    )
+
+    assert result["operation"] == "LONG_PRESS"
+    assert client.calls == [("long_press", (155, 55))]

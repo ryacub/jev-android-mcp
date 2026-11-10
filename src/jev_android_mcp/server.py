@@ -72,7 +72,7 @@ mcp = MCPServer(
     "Jev Android MCP",
     instructions=(
         "Use android_observe before android_act. Actions are bound to one "
-        "observation ID. android_act supports Enter, Home, fixed "
+        "observation ID. android_act supports long press, Enter, Home, fixed "
         "portrait/landscape rotation, four-way scroll, and a one-call picture-in-picture "
         "expand. android_press_key, android_open_uri, and android_wait_for cover keys, "
         "deep links, and waits. Observations are compact unless detail='full'. "
@@ -327,6 +327,12 @@ def _act(
         x = (node.bounds.left + node.bounds.right) // 2
         y = (node.bounds.top + node.bounds.bottom) // 2
         client.tap(x, y)
+    elif action.operation == "LONG_PRESS":
+        if node is None:
+            raise ValueError("LONG_PRESS action has no node")
+        x = (node.bounds.left + node.bounds.right) // 2
+        y = (node.bounds.top + node.bounds.bottom) // 2
+        client.long_press(x, y)
     elif action.operation == "EXPAND_PIP":
         if node is None:
             raise ValueError("EXPAND_PIP action has no node")

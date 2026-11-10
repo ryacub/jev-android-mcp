@@ -225,3 +225,25 @@ def test_pinned_window_gets_an_expand_action() -> None:
         action.operation != "EXPAND_PIP"
         for action in parse_observation(XML, "emulator-5554").actions
     )
+
+
+LONG_CLICKABLE_XML = XML.replace(
+    'clickable="true" enabled="true"\n          focusable="true" focused="false"',
+    'clickable="true" long-clickable="true" enabled="true"\n'
+    '          focusable="true" focused="false"',
+    1,
+)
+
+
+def test_long_clickable_node_gets_a_long_press_action() -> None:
+    observation = parse_observation(LONG_CLICKABLE_XML, "emulator-5554")
+
+    long_presses = [action for action in observation.actions if action.operation == "LONG_PRESS"]
+    assert [(action.label, action.node_id) for action in long_presses] == [("Search", "node-2")]
+    assert long_presses[0].id == f"{observation.observation_id}:long_press:node-2"
+
+
+def test_node_without_long_clickable_gets_no_long_press_action() -> None:
+    observation = parse_observation(XML, "emulator-5554")
+
+    assert all(action.operation != "LONG_PRESS" for action in observation.actions)

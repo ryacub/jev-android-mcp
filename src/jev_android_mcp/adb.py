@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Literal
 
+LONG_PRESS_MS = 800
+
 
 class AdbError(RuntimeError):
     """Raised when an ADB operation fails."""
@@ -180,6 +182,11 @@ class AdbClient:
 
         with self.locked():
             return self.shell("input", "tap", str(x), str(y))
+
+    def long_press(self, x: int, y: int) -> str:
+        """Hold one coordinate long enough for Android to report a long click."""
+
+        return self.swipe(x, y, x, y, LONG_PRESS_MS)
 
     def type_text(self, text: str) -> str:
         """Type text without putting the text in a command log or exception."""
