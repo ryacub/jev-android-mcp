@@ -172,6 +172,26 @@ def test_observe_accepts_any_listed_package(monkeypatch) -> None:
     assert server.android_observe(serial="emulator-5554")["package"] == "com.example.reader"
 
 
+@pytest.mark.parametrize(
+    "installer", ["com.google.android.packageinstaller", "com.android.packageinstaller"]
+)
+def test_observe_accepts_the_system_package_installer(monkeypatch, installer) -> None:
+    client, _ = _prepare(monkeypatch)
+    client.screens = [XML.replace('package="com.example.reader"', f'package="{installer}"')]
+
+    assert server.android_observe(serial="emulator-5554")["package"] == installer
+
+
+def test_reset_refuses_the_system_package_installer(monkeypatch) -> None:
+    _prepare(monkeypatch)
+
+    with pytest.raises(ToolError, match="not in ANDROID_APP_PACKAGE"):
+        _call_tool(
+            "android_reset",
+            {"package": "com.google.android.packageinstaller", "confirm": True},
+        )
+
+
 def test_observe_error_names_foreground_and_allowed_packages(monkeypatch) -> None:
     _prepare(monkeypatch)
     monkeypatch.setenv("ANDROID_APP_PACKAGE", "com.example.release,com.example.dev")

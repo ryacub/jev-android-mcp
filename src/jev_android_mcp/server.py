@@ -29,6 +29,8 @@ SYSTEM_PACKAGES = {
     "com.android.systemui",
     "com.android.documentsui",
     "com.google.android.documentsui",
+    "com.android.packageinstaller",
+    "com.google.android.packageinstaller",
     "com.google.android.apps.nexuslauncher",
     "com.android.launcher3",
 }
