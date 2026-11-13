@@ -42,6 +42,7 @@ def test_parse_observation_builds_compact_action_space() -> None:
         "PRESS_ENTER",
         "BACK",
         "HOME",
+        "RECENTS",
         "ROTATE_PORTRAIT",
         "ROTATE_LANDSCAPE",
         "WAIT",

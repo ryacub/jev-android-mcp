@@ -311,3 +311,65 @@ def test_long_press_holds_the_node_center(monkeypatch) -> None:
 
     assert result["operation"] == "LONG_PRESS"
     assert client.calls == [("long_press", (155, 55))]
+
+
+RECENTS_XML = """<hierarchy rotation="0">
+<node package="com.google.android.apps.nexuslauncher"
+ resource-id="com.google.android.apps.nexuslauncher:id/overview_panel"
+ bounds="[0,0][1080,2400]">
+ <node package="com.google.android.apps.nexuslauncher"
+  resource-id="com.google.android.apps.nexuslauncher:id/task_view_single"
+  clickable="true" bounds="[173,207][907,2006]">
+  <node package="com.google.android.apps.nexuslauncher" content-desc="Reader"
+   resource-id="com.google.android.apps.nexuslauncher:id/snapshot" bounds="[173,375][907,2006]" />
+ </node>
+</node>
+</hierarchy>"""
+
+
+def test_open_recents_and_swipe_observed_task_card(monkeypatch) -> None:
+    client, initial = _prepare(monkeypatch)
+    client.screens = [RECENTS_XML]
+    result = server.android_act(initial["observation_id"], _action(initial, "RECENTS")["id"])
+    recents = result["next_observation"]
+    swipe = _action(recents, "SWIPE_AWAY_TASK")
+    assert swipe["label"] == "Swipe away Reader"
+    server.android_act(recents["observation_id"], swipe["id"], wait_seconds=0)
+    assert client.calls == [
+        ("press_keys", ("KEYCODE_APP_SWITCH", 1)),
+        ("swipe", (540, 1106, 540, 5, 300)),
+    ]
+
+
+def test_swipe_away_rejects_a_card_that_moved(monkeypatch) -> None:
+    client, _ = _prepare(monkeypatch)
+    client.screens = [RECENTS_XML, RECENTS_XML.replace("[173,207]", "[215,207]")]
+    recents = server.android_observe()
+    swipe = _action(recents, "SWIPE_AWAY_TASK")
+
+    with pytest.raises(ToolError, match="Recents card changed"):
+        server.android_act(recents["observation_id"], swipe["id"], wait_seconds=0)
+    assert client.calls == []
+
+
+@pytest.mark.parametrize("still_pinned", [True, False])
+def test_dismiss_pip_uses_top_end_control_only_while_target_is_pinned(
+    monkeypatch, still_pinned
+) -> None:
+    client, _ = _prepare(monkeypatch)
+    client.activities = PINNED_DUMPSYS
+    monkeypatch.setattr(client, "display_density", lambda: 420, raising=False)
+    observation = server.android_observe()
+
+    def open_menu(seconds: float) -> None:
+        if not still_pinned:
+            client.activities = ""
+
+    monkeypatch.setattr(server.time, "sleep", open_menu)
+    server.android_act(
+        observation["observation_id"], _action(observation, "DISMISS_PIP")["id"], wait_seconds=0
+    )
+    expected = [("tap", PINNED_CENTER)]
+    if still_pinned:
+        expected.append(("tap", (975, 2022)))
+    assert client.calls == expected

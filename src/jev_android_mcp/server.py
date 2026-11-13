@@ -17,8 +17,8 @@ from mcp.types import ToolAnnotations
 
 from jev_android_mcp.adb import AdbClient, AdbError
 from jev_android_mcp.agent import completion_oracle_for_goal, run_jev
-from jev_android_mcp.models import Action, Observation
-from jev_android_mcp.state import parse_observation, pinned_window
+from jev_android_mcp.models import Action, Observation, UiNode
+from jev_android_mcp.state import parse_observation, pinned_window, recents_card_labels
 
 LOGGER = logging.getLogger(__name__)
 PACKAGE_ENV = "ANDROID_APP_PACKAGE"
@@ -38,6 +38,8 @@ SYSTEM_PACKAGES = {
 # window center and hides after a few seconds. The gap must exceed the double-tap
 # timeout, or the system reads a resize gesture.
 PIP_MENU_DELAY_SECONDS = 0.6
+# AOSP phone PiP places the center of its 48 dp close button 24 dp from the corner.
+PIP_CLOSE_INSET_DP = 24
 SCREEN_TEXT_CHARS = 160
 SCREEN_TEXT_ITEMS = 80
 SCROLL_DIRECTIONS = {"up", "down", "left", "right"}
@@ -75,8 +77,9 @@ mcp = MCPServer(
     instructions=(
         "Use android_observe before android_act. Actions are bound to one "
         "observation ID. android_act supports long press, Enter, Home, fixed "
-        "portrait/landscape rotation, four-way scroll, and a one-call picture-in-picture "
-        "expand. android_press_key, android_open_uri, and android_wait_for cover keys, "
+        "portrait/landscape rotation, four-way scroll, Recents, task-card swipes, "
+        "and picture-in-picture expand and close. android_press_key, android_open_uri, "
+        "and android_wait_for cover keys, "
         "deep links, and waits. Observations are compact unless detail='full'. "
         "android_reset clears the configured app data and requires confirm=true. "
         "The server uses UIAutomator state only; screenshots are not captured or sent to models."
@@ -304,6 +307,40 @@ def _next_observation(client: AdbClient) -> dict[str, Any] | None:
     }
 
 
+def _dismiss_pip(client: AdbClient, node: UiNode) -> None:
+    if _allowed_pinned_window(client) != (node.package, node.bounds):
+        raise ValueError("Picture-in-picture window changed; observe again")
+    inset = round(PIP_CLOSE_INSET_DP * client.display_density() / 160)
+    client.tap(
+        (node.bounds.left + node.bounds.right) // 2,
+        (node.bounds.top + node.bounds.bottom) // 2,
+    )
+    time.sleep(PIP_MENU_DELAY_SECONDS)
+    pinned = _allowed_pinned_window(client)
+    if pinned is None or pinned[0] != node.package:
+        return
+    bounds = pinned[1]
+    if bounds.right - bounds.left < 2 * inset or bounds.bottom - bounds.top < 2 * inset:
+        raise ValueError("Picture-in-picture window is too small to locate the close control")
+    client.tap(bounds.right - inset, bounds.top + inset)
+
+
+def _swipe_away_task(client: AdbClient, cached: Observation, node: UiNode) -> None:
+    current = parse_observation(client.ui_hierarchy_xml(), cached.serial)
+    label = recents_card_labels(cached.nodes)[node.id]
+    current_labels = recents_card_labels(current.nodes)
+    if current.package != cached.package or not any(
+        card.path == node.path
+        and card.bounds == node.bounds
+        and current_labels.get(card.id) == label
+        for card in current.nodes
+    ):
+        raise ValueError("Recents card changed; observe again")
+    x = (node.bounds.left + node.bounds.right) // 2
+    y = (node.bounds.top + node.bounds.bottom) // 2
+    client.swipe(x, y, x, 5)
+
+
 def _act(
     observation_id: str,
     action_id: str,
@@ -344,6 +381,14 @@ def _act(
         time.sleep(PIP_MENU_DELAY_SECONDS)
         if _allowed_pinned_window(client) is not None:
             client.tap(x, y)
+    elif action.operation == "DISMISS_PIP":
+        if node is None:
+            raise ValueError("DISMISS_PIP action has no node")
+        _dismiss_pip(client, node)
+    elif action.operation == "SWIPE_AWAY_TASK":
+        if node is None:
+            raise ValueError("SWIPE_AWAY_TASK action has no node")
+        _swipe_away_task(client, cached, node)
     elif action.operation == "TYPE_TEXT":
         if text is None:
             raise ValueError("TYPE_TEXT requires text")
@@ -371,6 +416,8 @@ def _act(
         client.back()
     elif action.operation == "HOME":
         client.home()
+    elif action.operation == "RECENTS":
+        client.press_keys("KEYCODE_APP_SWITCH", 1)
     elif action.operation == "ROTATE_PORTRAIT":
         client.rotate("portrait")
     elif action.operation == "ROTATE_LANDSCAPE":

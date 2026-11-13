@@ -118,6 +118,14 @@ class AdbClient:
         # untrusted values as operators or additional commands.
         return self.run(("shell", shlex.join(args)), timeout=timeout)
 
+    def display_density(self) -> int:
+        """Return the default display's effective density in DPI."""
+        output = self.shell("wm", "density")
+        densities = re.findall(r"(?:Physical|Override) density: ([1-9]\d*)", output)
+        if not densities:
+            raise AdbError("Android did not report the display density")
+        return int(densities[-1])
+
     def activity_dump(self) -> str:
         """Return the activity manager task dump, which lists windowing modes."""
 

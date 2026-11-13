@@ -91,6 +91,32 @@ def _video_surface_label(node: UiNode) -> str:
     return f"Video surface ({resource_name})" if resource_name else "Video surface"
 
 
+RECENTS_LAUNCHERS = {"com.android.launcher3", "com.google.android.apps.nexuslauncher"}
+
+
+def recents_card_labels(nodes: list[UiNode]) -> dict[str, str]:
+    """Identify visible task cards from the launcher's labeled snapshot nodes."""
+    by_path = {node.path: node for node in nodes}
+    cards = {}
+    for snapshot in nodes:
+        if (
+            snapshot.package not in RECENTS_LAUNCHERS
+            or snapshot.resource_id != f"{snapshot.package}:id/snapshot"
+            or not snapshot.content_description
+            or not snapshot.has_area
+        ):
+            continue
+        card = by_path.get(snapshot.path.rpartition("/")[0])
+        if (
+            card
+            and card.package == snapshot.package
+            and card.resource_id == f"{snapshot.package}:id/task_view_single"
+            and card.clickable
+        ):
+            cards[card.id] = snapshot.content_description
+    return cards
+
+
 PINNED_PATH = "pip"
 PINNED_TASK = re.compile(r"\* Task\{.*\bA=\d+:(?P<package>[\w.]+) .*\bmode=pinned\b")
 PINNED_BOUNDS = re.compile(
@@ -151,6 +177,7 @@ def _actions(nodes: list[UiNode], observation_id: str) -> list[Action]:
                     labels.add(label)
                     descendant_labels.setdefault(path, []).append(label)
             path = path.rpartition("/")[0]
+    task_cards = recents_card_labels(nodes)
     for node in nodes:
         label = _action_label(node, descendant_labels)
         if not label or not node.enabled or not node.has_area:
@@ -185,6 +212,16 @@ def _actions(nodes: list[UiNode], observation_id: str) -> list[Action]:
                     label=label,
                 )
             )
+        if node.id in task_cards:
+            actions.append(
+                Action(
+                    id=f"{observation_id}:swipe_away_task:{node.id}",
+                    observation_id=observation_id,
+                    operation="SWIPE_AWAY_TASK",
+                    node_id=node.id,
+                    label=f"Swipe away {task_cards[node.id]}",
+                )
+            )
         if node.path == PINNED_PATH:
             actions.append(
                 Action(
@@ -193,6 +230,15 @@ def _actions(nodes: list[UiNode], observation_id: str) -> list[Action]:
                     operation="EXPAND_PIP",
                     node_id=node.id,
                     label="Expand the picture-in-picture window to full screen",
+                )
+            )
+            actions.append(
+                Action(
+                    id=f"{observation_id}:dismiss_pip:{node.id}",
+                    observation_id=observation_id,
+                    operation="DISMISS_PIP",
+                    node_id=node.id,
+                    label="Close the picture-in-picture window",
                 )
             )
         if node.editable:
@@ -234,6 +280,12 @@ def _actions(nodes: list[UiNode], observation_id: str) -> list[Action]:
                 observation_id=observation_id,
                 operation="HOME",
                 label="Android Home",
+            ),
+            Action(
+                id=f"{observation_id}:RECENTS",
+                observation_id=observation_id,
+                operation="RECENTS",
+                label="Open Android Recents",
             ),
             Action(
                 id=f"{observation_id}:ROTATE_PORTRAIT",

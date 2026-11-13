@@ -32,7 +32,13 @@ taps, text entry, scroll, Enter, Back, Home, and fixed portrait/landscape
 rotation. `scroll_direction` names the finger movement: `up`, `down`, `left`,
 or `right`. Use `PRESS_ENTER` after `TYPE_TEXT` when the focused field submits
 through the keyboard action. A picture-in-picture window of a configured app
-appears as a node with a tap action and an `EXPAND_PIP` action.
+appears as a node with tap, `EXPAND_PIP`, and `DISMISS_PIP` actions. PiP
+dismissal uses the Android phone menu layout. Check the returned observation to
+confirm the window disappeared.
+
+Use `RECENTS` to open Android Recents. On supported Launcher3 layouts,
+`SWIPE_AWAY_TASK` swipes the selected visible task card. It checks that the
+card still matches the observation before swiping.
 
 `android_press_key` sends one allowlisted key, such as `SPACE`, `DEL`, a D-pad
 key, or a media key, and can repeat it. It also needs a current observation ID.
