@@ -12,6 +12,9 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Literal
 
+from .models import Bounds
+from .state import merge_windows
+
 LONG_PRESS_MS = 800
 
 
@@ -131,8 +134,11 @@ class AdbClient:
 
         return self.shell("dumpsys", "activity", "activities")
 
-    def ui_hierarchy_xml(self, timeout: float = 30.0) -> str:
-        """Capture the current UIAutomator hierarchy."""
+    def ui_hierarchy_xml(self, timeout: float = 30.0, exclude: Bounds | None = None) -> str:
+        """Capture the active window's hierarchy plus same-app popups above it.
+
+        `exclude` is the picture-in-picture task's bounds, which are not merged.
+        """
 
         deadline = time.monotonic() + timeout
 
@@ -146,6 +152,19 @@ class AdbClient:
             # /dev/tty keeps the capture in stdout and avoids stale files plus three
             # additional shell round trips. It also makes the benchmark measure
             # observation latency rather than emulator storage housekeeping.
+            try:
+                windows = self.run(
+                    ("exec-out", "uiautomator", "dump", "--windows", "/dev/tty"),
+                    timeout=remaining(),
+                )
+            except AdbError:
+                windows = ""
+            start = windows.find("<displays")
+            end = windows.rfind("</displays>")
+            if start >= 0 and end >= 0:
+                merged = merge_windows(windows[start : end + len("</displays>")], exclude)
+                if merged is not None:
+                    return merged
             output = self.run(("exec-out", "uiautomator", "dump", "/dev/tty"), timeout=remaining())
             start = output.find("<hierarchy")
             end = output.rfind("</hierarchy>")
@@ -240,6 +259,13 @@ class AdbClient:
                 str(y2),
                 str(duration_ms),
             )
+
+    def run_script(self, commands: list[list[str]], timeout: float) -> str:
+        """Run trusted commands in one remote shell, so their timing stays intact."""
+
+        with self.locked():
+            script = " ; ".join(shlex.join(command) for command in commands)
+            return self.run(("shell", script), timeout=timeout)
 
     def back(self) -> str:
         """Send Android back to the selected device."""

@@ -17,6 +17,7 @@ from mcp.types import ToolAnnotations
 
 from jev_android_mcp.adb import AdbClient, AdbError
 from jev_android_mcp.agent import completion_oracle_for_goal, run_jev
+from jev_android_mcp.gesture import plan_gesture
 from jev_android_mcp.models import Action, Observation, UiNode
 from jev_android_mcp.state import parse_observation, pinned_window, recents_card_labels
 
@@ -81,7 +82,8 @@ mcp = MCPServer(
         "Use android_observe before android_act. Actions are bound to one "
         "observation ID. android_act supports long press, Enter, Home, fixed "
         "portrait/landscape rotation, four-way scroll, drags on sliders and "
-        "scrollable nodes, Recents, task-card swipes, "
+        "scrollable nodes, multi-step gestures that also cover video surfaces, "
+        "Recents, task-card swipes, "
         "and picture-in-picture expand and close. android_press_key, android_open_uri, "
         "and android_wait_for cover keys, "
         "deep links, and waits. Observations are compact unless detail='full'. "
@@ -233,12 +235,11 @@ def device_list() -> list[dict[str, str]]:
 def _observe(serial: str | None = None) -> dict[str, Any]:
     client = _client(serial)
     capture_started = time.perf_counter()
-    xml = client.ui_hierarchy_xml()
+    pinned = _allowed_pinned_window(client)
+    xml = client.ui_hierarchy_xml(exclude=pinned[1] if pinned else None)
     capture_ms = round((time.perf_counter() - capture_started) * 1000)
     parse_started = time.perf_counter()
-    observation = parse_observation(
-        xml, client.serial or "unknown", pinned=_allowed_pinned_window(client)
-    )
+    observation = parse_observation(xml, client.serial or "unknown", pinned=pinned)
     parse_ms = round((time.perf_counter() - parse_started) * 1000)
     _check_boundary(observation)
     return _observation_payload(_remember(observation)) | {
@@ -295,12 +296,11 @@ def _find_node(observation: Observation, node_id: str | None):
 def _next_observation(client: AdbClient) -> dict[str, Any] | None:
     try:
         capture_started = time.perf_counter()
-        xml = client.ui_hierarchy_xml()
+        pinned = _allowed_pinned_window(client)
+        xml = client.ui_hierarchy_xml(exclude=pinned[1] if pinned else None)
         capture_ms = round((time.perf_counter() - capture_started) * 1000)
         parse_started = time.perf_counter()
-        observation = parse_observation(
-            xml, client.serial or "unknown", pinned=_allowed_pinned_window(client)
-        )
+        observation = parse_observation(xml, client.serial or "unknown", pinned=pinned)
         parse_ms = round((time.perf_counter() - parse_started) * 1000)
         _check_boundary(observation)
     except AdbError as exc:
@@ -364,6 +364,7 @@ def _act(
     drag_from: list[float] | None = None,
     drag_to: list[float] | None = None,
     drag_ms: int = DEFAULT_DRAG_MS,
+    gesture: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if scroll_direction not in SCROLL_DIRECTIONS:
         raise ValueError("scroll_direction must be 'up', 'down', 'left', or 'right'")
@@ -437,6 +438,13 @@ def _act(
         if drag_from is None or drag_to is None:
             raise ValueError("DRAG requires drag_from and drag_to")
         client.swipe(*_point_in(node, drag_from), *_point_in(node, drag_to), drag_ms)
+    elif action.operation == "GESTURE":
+        if node is None:
+            raise ValueError("GESTURE action has no node")
+        if gesture is None:
+            raise ValueError("GESTURE requires gesture steps")
+        commands, gesture_ms = plan_gesture(node.bounds, gesture)
+        client.run_script(commands, timeout=gesture_ms / 1000 + len(commands) * 0.05 + 10)
     elif action.operation == "PRESS_ENTER":
         client.press_enter()
     elif action.operation == "BACK":
@@ -490,6 +498,7 @@ def android_act(
     drag_from: list[float] | None = None,
     drag_to: list[float] | None = None,
     drag_ms: int = DEFAULT_DRAG_MS,
+    gesture: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Execute one bounded action from the latest exact UIAutomator observation.
 
@@ -499,6 +508,19 @@ def android_act(
     DRAG moves one finger from drag_from to drag_to over drag_ms milliseconds. Each
     point is [x, y] as fractions of the node bounds: [0, 0] is the top-left corner,
     [1, 1] the bottom-right. DRAG is offered on sliders and scrollable nodes.
+
+    GESTURE runs a list of steps in one device shell, so the timing between steps
+    holds. It is offered on sliders, scrollable nodes, and video surfaces. Points
+    are fractions of the node bounds, as in DRAG. Steps:
+    {"down": [x, y]}, {"move": [x, y], "ms": 300}, {"hold": ms}, {"up": true},
+    {"tap": [x, y]}, and {"wheel": n, "at": [x, y]}, where n mouse-wheel notches
+    scroll the content and a negative n reveals content below. A gesture has at
+    most 50 steps and 10 seconds of moves and holds, and must end with the finger
+    up. Each input call costs about 20 ms on an emulator, so a move takes about
+    twice its ms. Example, wake a fast-scroll handle with one wheel notch, let the
+    scroll settle, then drag the handle:
+    [{"wheel": -1}, {"hold": 700}, {"down": [0.967, 0.21]}, {"hold": 150},
+    {"move": [0.967, 0.95], "ms": 3000}, {"up": true}].
     """
 
     result = _act(
@@ -511,6 +533,7 @@ def android_act(
         drag_from,
         drag_to,
         drag_ms,
+        gesture,
     )
     return result | {"next_observation": _shape(result["next_observation"], detail)}
 

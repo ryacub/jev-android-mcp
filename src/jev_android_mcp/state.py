@@ -275,6 +275,17 @@ def _actions(nodes: list[UiNode], observation_id: str) -> list[Action]:
                     label=f"Drag inside {label}",
                 )
             )
+        if node.scrollable or _is_slider(node) or _is_video_surface(node):
+            target = _video_surface_label(node) if _is_video_surface(node) else label
+            actions.append(
+                Action(
+                    id=f"{observation_id}:gesture:{node.id}",
+                    observation_id=observation_id,
+                    operation="GESTURE",
+                    node_id=node.id,
+                    label=f"Gesture inside {target}",
+                )
+            )
     actions.extend(
         [
             Action(
@@ -367,6 +378,60 @@ def _fingerprint(
     ]
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()[:20]
+
+
+def _window_package(window: ET.Element) -> str:
+    return next((node.attrib.get("package", "") for node in window.iter("node")), "")
+
+
+def _covers(a: Bounds, b: Bounds) -> bool:
+    """Return whether two rectangles cover the same area within 10 percent."""
+
+    width = min(a.right, b.right) - max(a.left, b.left)
+    height = min(a.bottom, b.bottom) - max(a.top, b.top)
+    if width <= 0 or height <= 0:
+        return False
+    overlap = width * height
+    area_a = (a.right - a.left) * (a.bottom - a.top)
+    area_b = (b.right - b.left) * (b.bottom - b.top)
+    return overlap >= 0.9 * area_a and overlap >= 0.9 * area_b
+
+
+def merge_windows(xml: str, exclude: Bounds | None = None) -> str | None:
+    """Fold same-app popups into the active window of a `dump --windows` capture.
+
+    A plain dump holds only the active window. A popup that does not take focus,
+    such as an editable dropdown menu, is a separate window above it, so its items
+    are missing. A window covering `exclude`, the picture-in-picture task, is left
+    out because the observation adds its own node for it. Return None when the
+    capture has no active window.
+    """
+
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return None
+    windows = list(root.iter("window"))
+    active = next((window for window in windows if window.attrib.get("active") == "true"), None)
+    hierarchy = active.find("hierarchy") if active is not None else None
+    if active is None or hierarchy is None:
+        return None
+    package = _window_package(active)
+    layer = int(active.attrib.get("layer", "0"))
+    popups = [
+        window
+        for window in windows
+        if window is not active
+        and window.attrib.get("type") == "TYPE_APPLICATION"
+        and int(window.attrib.get("layer", "0")) > layer
+        and _window_package(window) == package
+        and not (exclude and _covers(_bounds(window.attrib.get("bounds")), exclude))
+    ]
+    for popup in sorted(popups, key=lambda window: int(window.attrib.get("layer", "0"))):
+        popup_hierarchy = popup.find("hierarchy")
+        if popup_hierarchy is not None:
+            hierarchy.extend(list(popup_hierarchy))
+    return ET.tostring(hierarchy, encoding="unicode")
 
 
 def parse_observation(

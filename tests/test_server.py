@@ -18,11 +18,13 @@ class FakeClient:
     activities: str = ""
     screens: list[str | Exception] = field(default_factory=list)
     start_output: str = "Starting: Intent { act=android.intent.action.VIEW }"
+    excluded: Bounds | None = None
 
     def activity_dump(self) -> str:
         return self.activities
 
-    def ui_hierarchy_xml(self, timeout: float = 30.0) -> str:
+    def ui_hierarchy_xml(self, timeout: float = 30.0, exclude: Bounds | None = None) -> str:
+        self.excluded = exclude
         screen = self.screens.pop(0) if len(self.screens) > 1 else (self.screens or [XML])[0]
         if isinstance(screen, Exception):
             raise screen
@@ -50,6 +52,10 @@ class FakeClient:
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> str:
         self.calls.append(("swipe", (x1, y1, x2, y2, duration_ms)))
+        return ""
+
+    def run_script(self, commands: list[list[str]], timeout: float) -> str:
+        self.calls.append(("run_script", (commands,)))
         return ""
 
     def press_enter(self) -> str:
@@ -251,6 +257,24 @@ def test_observe_ignores_a_pinned_window_of_another_package(monkeypatch) -> None
     client.activities = PINNED_DUMPSYS.replace("com.example.reader", "com.example.other")
 
     assert _pip_taps(server.android_observe()) == []
+
+
+def test_observe_keeps_the_allowed_pinned_window_out_of_the_capture(monkeypatch) -> None:
+    client, _ = _prepare(monkeypatch)
+    client.activities = PINNED_DUMPSYS
+
+    server.android_observe()
+
+    assert client.excluded == PINNED[1]
+
+
+def test_observe_captures_everything_without_an_allowed_pinned_window(monkeypatch) -> None:
+    client, _ = _prepare(monkeypatch)
+    client.activities = PINNED_DUMPSYS.replace("com.example.reader", "com.example.other")
+
+    server.android_observe()
+
+    assert client.excluded is None
 
 
 def test_observe_survives_a_failed_activity_dump(monkeypatch) -> None:

@@ -231,3 +231,46 @@ def test_drag_rejects_missing_or_out_of_range_input(
         )
 
     assert client.calls == []
+
+
+def test_gesture_runs_the_planned_steps_in_one_script(monkeypatch) -> None:
+    client, observation = _prepare(monkeypatch)
+
+    server.android_act(
+        observation_id=observation["observation_id"],
+        action_id=_action(observation, "GESTURE")["id"],
+        gesture=[{"tap": [0.0, 0.0]}, {"hold": 100}, {"tap": [1.0, 1.0]}],
+        wait_seconds=0,
+    )
+
+    assert client.calls == [
+        (
+            "run_script",
+            (
+                [
+                    ["input", "motionevent", "DOWN", "0", "220"],
+                    ["sleep", "0.040"],
+                    ["input", "motionevent", "UP", "0", "220"],
+                    ["sleep", "0.100"],
+                    ["input", "motionevent", "DOWN", "1079", "1919"],
+                    ["sleep", "0.040"],
+                    ["input", "motionevent", "UP", "1079", "1919"],
+                ],
+            ),
+        )
+    ]
+
+
+@pytest.mark.parametrize("gesture", [None, [{"down": [0.5, 0.5]}]])
+def test_gesture_rejects_missing_or_unfinished_steps(monkeypatch, gesture) -> None:
+    client, observation = _prepare(monkeypatch)
+
+    with pytest.raises(ToolError):
+        server.android_act(
+            observation_id=observation["observation_id"],
+            action_id=_action(observation, "GESTURE")["id"],
+            gesture=gesture,
+            wait_seconds=0,
+        )
+
+    assert client.calls == []

@@ -35,7 +35,38 @@ scrollable nodes. It moves one finger from `drag_from` to `drag_to` over
 `drag_ms` milliseconds (100 to 5000, default 800). Each point is `[x, y]` as
 fractions of the node bounds, so `drag_from=[0, 0.5], drag_to=[1, 0.5]` drags a
 horizontal slider from its start to its end, and `drag_from=[0.98, 0.02]` presses
-near the top of a list's right edge, where a fast-scroll handle sits. Use `PRESS_ENTER` after `TYPE_TEXT` when the focused field submits
+near the top of a list's right edge, where a fast-scroll handle sits.
+
+`GESTURE` is offered on sliders, scrollable nodes, and video surfaces. It runs a
+list of steps in one device shell, so the timing between steps holds even when
+an observation takes two seconds. Points are node-bound fractions, as in `DRAG`:
+
+- `{"down": [x, y]}`, `{"move": [x, y], "ms": 300}`, `{"up": true}` for one finger.
+- `{"hold": ms}` waits with the finger down or up.
+- `{"tap": [x, y]}` taps once, so two taps 120 ms apart make a double tap.
+- `{"wheel": n, "at": [x, y]}` sends mouse-wheel notches. A negative `n` reveals
+  content below; a positive `n` reveals content above.
+
+A gesture has at most 50 steps and 10 seconds of moves and holds, and must end
+with the finger up. Each `input` call costs about 20 ms on an emulator, so a
+`move` takes about twice its `ms`. Examples:
+
+- Double-tap seek on the right of a video: `[{"tap": [0.85, 0.5]}, {"hold": 120}, {"tap": [0.85, 0.5]}]`.
+- Grab a fast-scroll handle that shows only after a scroll:
+  `[{"wheel": -1}, {"hold": 700}, {"down": [0.967, 0.21]}, {"hold": 150}, {"move": [0.967, 0.95], "ms": 3000}, {"up": true}]`.
+  Wait for the wheel animation to end before the down step; a handle that rejects
+  drags while the list scrolls passes the drag to the list.
+  One large wheel count keeps animating after the list stops at its end, and
+  later notches merge into it, so send small counts.
+
+The hierarchy comes from `uiautomator dump --windows`. Popups of the active app
+that do not take focus, such as an editable dropdown menu, are separate windows
+that a plain dump leaves out. The server adds each one above the active window as
+extra children of the root, so existing node paths do not change. A
+picture-in-picture window is left out, because it already shows as its own node.
+If the device does not support `--windows`, the server falls back to a plain dump.
+
+Use `PRESS_ENTER` after `TYPE_TEXT` when the focused field submits
 through the keyboard action. A picture-in-picture window of a configured app
 appears as a node with tap, `EXPAND_PIP`, and `DISMISS_PIP` actions. PiP
 dismissal uses the Android phone menu layout. Check the returned observation to

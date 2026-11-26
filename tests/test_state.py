@@ -1,5 +1,5 @@
 from jev_android_mcp.models import Bounds
-from jev_android_mcp.state import parse_observation, pinned_window
+from jev_android_mcp.state import merge_windows, parse_observation, pinned_window
 
 XML = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
 <hierarchy rotation="0">
@@ -40,6 +40,7 @@ def test_parse_observation_builds_compact_action_space() -> None:
         "TYPE_TEXT",
         "SCROLL",
         "DRAG",
+        "GESTURE",
         "PRESS_ENTER",
         "BACK",
         "HOME",
@@ -152,6 +153,8 @@ def test_video_surface_gets_a_tap_action_without_clickable() -> None:
     ]
     assert len(surface_taps) == 1
     assert "player_surface" in surface_taps[0].label
+    gestures = [action for action in observation.actions if action.operation == "GESTURE"]
+    assert "Gesture inside Video surface (player_surface)" in [action.label for action in gestures]
 
 
 def test_zero_area_video_surface_is_not_an_action() -> None:
@@ -263,3 +266,84 @@ def test_slider_gets_a_drag_action() -> None:
     drags = [action for action in observation.actions if action.operation == "DRAG"]
     assert [action.node_id for action in drags] == ["node-1"]
     assert drags[0].id == f"{observation.observation_id}:drag:node-1"
+
+
+def test_slider_gets_a_gesture_action() -> None:
+    observation = parse_observation(SLIDER_XML, "emulator-5554")
+
+    gestures = [action for action in observation.actions if action.operation == "GESTURE"]
+    assert [action.node_id for action in gestures] == ["node-1"]
+
+
+def _window(
+    index: int,
+    layer: int,
+    active: bool,
+    kind: str,
+    package: str,
+    text: str,
+    bounds: str = "[0,0][1080,2400]",
+) -> str:
+    return (
+        f'<window index="{index}" title="" bounds="{bounds}" active="{str(active).lower()}"'
+        f' focused="false" id="{index}" layer="{layer}" type="{kind}"><hierarchy rotation="0">'
+        f'<node index="0" text="{text}" class="android.widget.TextView" package="{package}"'
+        ' clickable="true" enabled="true" bounds="[0,0][500,100]" /></hierarchy></window>'
+    )
+
+
+def _displays(*windows: str) -> str:
+    return f'<displays><display id="0">{"".join(windows)}</display></displays>'
+
+
+def test_merge_windows_adds_a_same_app_popup_above_the_active_window() -> None:
+    xml = _displays(
+        _window(0, 2, False, "TYPE_SYSTEM", "com.android.systemui", "Clock"),
+        _window(1, 1, False, "TYPE_APPLICATION", "com.example.reader", "Serif"),
+        _window(2, 0, True, "TYPE_APPLICATION", "com.example.reader", "Font"),
+    )
+
+    observation = parse_observation(merge_windows(xml) or "", "emulator-5554")
+
+    assert [node.text for node in observation.nodes] == ["", "Font", "Serif"]
+    assert [node.path for node in observation.nodes] == ["0", "0/0", "0/1"]
+    assert {action.label for action in observation.actions if action.operation == "TAP"} == {
+        "Font",
+        "Serif",
+    }
+
+
+def test_merge_windows_skips_windows_below_or_from_other_apps() -> None:
+    xml = _displays(
+        _window(0, 3, False, "TYPE_APPLICATION", "com.other.app", "Other"),
+        _window(1, 2, True, "TYPE_APPLICATION", "com.example.reader", "Dialog"),
+        _window(2, 1, False, "TYPE_APPLICATION", "com.example.reader", "Behind"),
+    )
+
+    observation = parse_observation(merge_windows(xml) or "", "emulator-5554")
+
+    assert [node.text for node in observation.nodes] == ["", "Dialog"]
+
+
+def test_merge_windows_returns_none_without_an_active_window() -> None:
+    xml = _displays(_window(0, 0, False, "TYPE_APPLICATION", "com.example.reader", "Font"))
+
+    assert merge_windows(xml) is None
+    assert merge_windows("not xml") is None
+
+
+def test_merge_windows_leaves_out_the_picture_in_picture_window() -> None:
+    xml = _displays(
+        _window(
+            0, 2, False, "TYPE_APPLICATION", "com.example.reader", "Player", "[600,1500][1050,1753]"
+        ),
+        _window(
+            1, 1, False, "TYPE_APPLICATION", "com.example.reader", "Serif", "[100,900][700,1300]"
+        ),
+        _window(2, 0, True, "TYPE_APPLICATION", "com.example.reader", "Library"),
+    )
+
+    merged = merge_windows(xml, exclude=Bounds(left=598, top=1498, right=1050, bottom=1755))
+    observation = parse_observation(merged or "", "emulator-5554")
+
+    assert [node.text for node in observation.nodes] == ["", "Library", "Serif"]
