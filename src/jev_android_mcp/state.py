@@ -86,6 +86,10 @@ def _is_video_surface(node: UiNode) -> bool:
     return node.class_name in VIDEO_SURFACE_CLASSES
 
 
+def _is_slider(node: UiNode) -> bool:
+    return node.class_name == "android.widget.SeekBar"
+
+
 def _video_surface_label(node: UiNode) -> str:
     resource_name = node.resource_id.rpartition("/")[2]
     return f"Video surface ({resource_name})" if resource_name else "Video surface"
@@ -259,6 +263,16 @@ def _actions(nodes: list[UiNode], observation_id: str) -> list[Action]:
                     operation="SCROLL",
                     node_id=node.id,
                     label=label,
+                )
+            )
+        if node.scrollable or _is_slider(node):
+            actions.append(
+                Action(
+                    id=f"{observation_id}:drag:{node.id}",
+                    observation_id=observation_id,
+                    operation="DRAG",
+                    node_id=node.id,
+                    label=f"Drag inside {label}",
                 )
             )
     actions.extend(

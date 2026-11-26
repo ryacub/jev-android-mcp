@@ -187,3 +187,47 @@ def test_wait_for_reports_the_capture_error_when_it_never_clears(monkeypatch) ->
 
     with pytest.raises(ToolError, match="no hierarchy XML"):
         server.android_wait_for("Episode 1", timeout_seconds=12)
+
+
+def test_drag_maps_fractions_to_pixels_inside_the_node(monkeypatch) -> None:
+    client, observation = _prepare(monkeypatch)
+
+    server.android_act(
+        observation_id=observation["observation_id"],
+        action_id=_action(observation, "DRAG")["id"],
+        drag_from=[0.0, 0.0],
+        drag_to=[1.0, 0.5],
+        drag_ms=1200,
+        wait_seconds=0,
+    )
+
+    assert client.calls == [("swipe", (0, 220, 1079, 1070, 1200))]
+
+
+@pytest.mark.parametrize(
+    ("drag_from", "drag_to", "drag_ms"),
+    [
+        (None, [1.0, 0.5], 800),
+        ([0.0, 0.5], None, 800),
+        ([0.0, 1.5], [1.0, 0.5], 800),
+        ([0.0], [1.0, 0.5], 800),
+        ([0.0, 0.5], [1.0, 0.5], 50),
+        ([0.0, 0.5], [1.0, 0.5], 6000),
+    ],
+)
+def test_drag_rejects_missing_or_out_of_range_input(
+    monkeypatch, drag_from, drag_to, drag_ms
+) -> None:
+    client, observation = _prepare(monkeypatch)
+
+    with pytest.raises(ToolError):
+        server.android_act(
+            observation_id=observation["observation_id"],
+            action_id=_action(observation, "DRAG")["id"],
+            drag_from=drag_from,
+            drag_to=drag_to,
+            drag_ms=drag_ms,
+            wait_seconds=0,
+        )
+
+    assert client.calls == []

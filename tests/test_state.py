@@ -39,6 +39,7 @@ def test_parse_observation_builds_compact_action_space() -> None:
         "TAP",
         "TYPE_TEXT",
         "SCROLL",
+        "DRAG",
         "PRESS_ENTER",
         "BACK",
         "HOME",
@@ -248,3 +249,17 @@ def test_node_without_long_clickable_gets_no_long_press_action() -> None:
     observation = parse_observation(XML, "emulator-5554")
 
     assert all(action.operation != "LONG_PRESS" for action in observation.actions)
+
+
+SLIDER_XML = """<hierarchy rotation="0">
+<node class="android.widget.SeekBar" package="com.example.reader" text="" content-desc=""
+ clickable="false" focusable="true" enabled="true" bounds="[37,1154][1043,1270]" />
+</hierarchy>"""
+
+
+def test_slider_gets_a_drag_action() -> None:
+    observation = parse_observation(SLIDER_XML, "emulator-5554")
+
+    drags = [action for action in observation.actions if action.operation == "DRAG"]
+    assert [action.node_id for action in drags] == ["node-1"]
+    assert drags[0].id == f"{observation.observation_id}:drag:node-1"

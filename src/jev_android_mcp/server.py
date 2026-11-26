@@ -43,6 +43,9 @@ PIP_CLOSE_INSET_DP = 24
 SCREEN_TEXT_CHARS = 160
 SCREEN_TEXT_ITEMS = 80
 SCROLL_DIRECTIONS = {"up", "down", "left", "right"}
+DEFAULT_DRAG_MS = 800
+MIN_DRAG_MS = 100
+MAX_DRAG_MS = 5000
 KEYS = {
     "SPACE",
     "TAB",
@@ -77,7 +80,8 @@ mcp = MCPServer(
     instructions=(
         "Use android_observe before android_act. Actions are bound to one "
         "observation ID. android_act supports long press, Enter, Home, fixed "
-        "portrait/landscape rotation, four-way scroll, Recents, task-card swipes, "
+        "portrait/landscape rotation, four-way scroll, drags on sliders and "
+        "scrollable nodes, Recents, task-card swipes, "
         "and picture-in-picture expand and close. android_press_key, android_open_uri, "
         "and android_wait_for cover keys, "
         "deep links, and waits. Observations are compact unless detail='full'. "
@@ -341,6 +345,15 @@ def _swipe_away_task(client: AdbClient, cached: Observation, node: UiNode) -> No
     client.swipe(x, y, x, 5)
 
 
+def _point_in(node: UiNode, fraction: list[float]) -> tuple[int, int]:
+    """Map [x, y] fractions of a node's bounds to a pixel inside those bounds."""
+
+    bounds = node.bounds
+    x = bounds.left + round(fraction[0] * (bounds.right - bounds.left - 1))
+    y = bounds.top + round(fraction[1] * (bounds.bottom - bounds.top - 1))
+    return x, y
+
+
 def _act(
     observation_id: str,
     action_id: str,
@@ -348,11 +361,19 @@ def _act(
     scroll_direction: str = "up",
     wait_seconds: float = 0.5,
     serial: str | None = None,
+    drag_from: list[float] | None = None,
+    drag_to: list[float] | None = None,
+    drag_ms: int = DEFAULT_DRAG_MS,
 ) -> dict[str, Any]:
     if scroll_direction not in SCROLL_DIRECTIONS:
         raise ValueError("scroll_direction must be 'up', 'down', 'left', or 'right'")
     if not 0.0 <= wait_seconds <= 5.0:
         raise ValueError("wait_seconds must be between 0 and 5")
+    for point in (drag_from, drag_to):
+        if point is not None and (len(point) != 2 or not all(0.0 <= v <= 1.0 for v in point)):
+            raise ValueError("drag_from and drag_to must be [x, y] fractions between 0 and 1")
+    if not MIN_DRAG_MS <= drag_ms <= MAX_DRAG_MS:
+        raise ValueError(f"drag_ms must be between {MIN_DRAG_MS} and {MAX_DRAG_MS}")
 
     client = _client(serial)
     cached = _cached(client, observation_id)
@@ -410,6 +431,12 @@ def _act(
             client.swipe(right, y, left, y)
         else:
             client.swipe(left, y, right, y)
+    elif action.operation == "DRAG":
+        if node is None:
+            raise ValueError("DRAG action has no node")
+        if drag_from is None or drag_to is None:
+            raise ValueError("DRAG requires drag_from and drag_to")
+        client.swipe(*_point_in(node, drag_from), *_point_in(node, drag_to), drag_ms)
     elif action.operation == "PRESS_ENTER":
         client.press_enter()
     elif action.operation == "BACK":
@@ -460,14 +487,31 @@ def android_act(
     wait_seconds: float = 0.5,
     serial: str | None = None,
     detail: Detail = "compact",
+    drag_from: list[float] | None = None,
+    drag_to: list[float] | None = None,
+    drag_ms: int = DEFAULT_DRAG_MS,
 ) -> dict[str, Any]:
     """Execute one bounded action from the latest exact UIAutomator observation.
 
     scroll_direction names the finger movement: "up" reveals content below, "left"
     reveals content to the right.
+
+    DRAG moves one finger from drag_from to drag_to over drag_ms milliseconds. Each
+    point is [x, y] as fractions of the node bounds: [0, 0] is the top-left corner,
+    [1, 1] the bottom-right. DRAG is offered on sliders and scrollable nodes.
     """
 
-    result = _act(observation_id, action_id, text, scroll_direction, wait_seconds, serial)
+    result = _act(
+        observation_id,
+        action_id,
+        text,
+        scroll_direction,
+        wait_seconds,
+        serial,
+        drag_from,
+        drag_to,
+        drag_ms,
+    )
     return result | {"next_observation": _shape(result["next_observation"], detail)}
 
 

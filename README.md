@@ -30,7 +30,12 @@ and the tools below take the same `detail` argument.
 `android_act` executes one action from that exact observation ID, including
 taps, text entry, scroll, Enter, Back, Home, and fixed portrait/landscape
 rotation. `scroll_direction` names the finger movement: `up`, `down`, `left`,
-or `right`. Use `PRESS_ENTER` after `TYPE_TEXT` when the focused field submits
+or `right`. `DRAG` is offered on sliders (`android.widget.SeekBar`) and
+scrollable nodes. It moves one finger from `drag_from` to `drag_to` over
+`drag_ms` milliseconds (100 to 5000, default 800). Each point is `[x, y]` as
+fractions of the node bounds, so `drag_from=[0, 0.5], drag_to=[1, 0.5]` drags a
+horizontal slider from its start to its end, and `drag_from=[0.98, 0.02]` presses
+near the top of a list's right edge, where a fast-scroll handle sits. Use `PRESS_ENTER` after `TYPE_TEXT` when the focused field submits
 through the keyboard action. A picture-in-picture window of a configured app
 appears as a node with tap, `EXPAND_PIP`, and `DISMISS_PIP` actions. PiP
 dismissal uses the Android phone menu layout. Check the returned observation to
