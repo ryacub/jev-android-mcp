@@ -59,6 +59,15 @@ with the finger up. Each `input` call costs about 20 ms on an emulator, so a
   One large wheel count keeps animating after the list stops at its end, and
   later notches merge into it, so send small counts.
 
+To check a short-lived toast, pass `toast_timeout_seconds=3` to
+`android_act` for an app tap or long press. Jev listens before the action and
+returns the first matching toast text from the target package under `toast`.
+`not_observed` means no matching event arrived within the wait. `unavailable`
+means the event stream ended after the action. If Jev cannot start the stream,
+the action returns an error before sending input. This prototype supports
+single-line toast events on Android versions with `uiautomator events`.
+It returns accessibility evidence and takes no screenshot.
+
 The hierarchy comes from `uiautomator dump --windows`. Popups of the active app
 that do not take focus, such as an editable dropdown menu, are separate windows
 that a plain dump leaves out. The server adds each one above the active window as
@@ -93,9 +102,16 @@ initial credential and hierarchy capture/parse timings appear in
 data. The configured app and known Android system surfaces are allowed; other
 packages are rejected.
 
+Before a test, call `android_preflight` to check whether the device finished
+booting and whether the configured app is installed. It reports `booting`,
+`package_missing`, or `ready`, along with the installed version name and code.
+Set `include_apk_sha256=true` to hash the installed base and split APKs on the
+device. Compare the base hash with the APK you plan to test. Pass `serial`
+when more than one device is online.
+
 Configure the apps under test before starting the server. The value is one
 package or a comma-separated list. The first package is the default for
-`android_launch`, `android_reset`, and `android_logcat`; each of them also
+`android_launch`, `android_reset`, `android_logcat`, and `android_preflight`. Each
 takes a `package` argument from the list.
 
 ```bash

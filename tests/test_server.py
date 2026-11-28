@@ -141,6 +141,31 @@ def test_android_act_executes_each_bounded_operation(
     assert [call[0] for call in client.calls] == ([] if expected_call is None else [expected_call])
 
 
+def test_android_act_captures_toast_for_one_configured_app_tap(monkeypatch) -> None:
+    client, observation = _prepare(monkeypatch)
+    action = _action(observation, "TAP")
+
+    def capture(device, package, act, timeout):
+        assert device is client
+        assert package == "com.example.reader"
+        assert timeout == 3
+        assert client.calls == []
+        act()
+        return {"status": "observed", "text": "Try again"}
+
+    monkeypatch.setattr(server, "capture_toast", capture)
+    result = server.android_act(
+        observation_id=observation["observation_id"],
+        action_id=action["id"],
+        toast_timeout_seconds=3,
+        wait_seconds=0,
+    )
+
+    assert result["toast"] == {"status": "observed", "text": "Try again"}
+    assert result["next_observation"] is not None
+    assert [call[0] for call in client.calls] == ["tap"]
+
+
 def test_device_list_preserves_adb_device_state(monkeypatch) -> None:
     monkeypatch.setattr(
         server.AdbClient,

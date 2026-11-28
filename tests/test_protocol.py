@@ -22,6 +22,7 @@ async def test_stdio_server_lists_bounded_android_tools() -> None:
     assert initialized.server_info.name == "Jev Android MCP"
     assert {
         "device_list",
+        "android_preflight",
         "android_observe",
         "android_act",
         "android_run",

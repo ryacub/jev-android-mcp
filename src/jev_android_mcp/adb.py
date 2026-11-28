@@ -9,7 +9,7 @@ import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from threading import Lock
+from threading import Lock, RLock
 from typing import Literal
 
 from .models import Bounds
@@ -29,7 +29,7 @@ class Device:
     details: str = ""
 
 
-_DEVICE_LOCKS: dict[str, Lock] = {}
+_DEVICE_LOCKS: dict[str, RLock] = {}
 _DEVICE_LOCKS_GUARD = Lock()
 _SENSITIVE_LOG_RE = re.compile(
     r"(?i)(\b(?:password|passcode|token|secret|authorization|cookie|api[_-]?key)\b\s*[:=]\s*)\S+"
@@ -58,7 +58,7 @@ class AdbClient:
         if not self.serial:
             raise AdbError("An explicit device serial is required for Android operations")
         with _DEVICE_LOCKS_GUARD:
-            lock = _DEVICE_LOCKS.setdefault(self.serial, Lock())
+            lock = _DEVICE_LOCKS.setdefault(self.serial, RLock())
         with lock:
             yield
 
@@ -121,6 +121,58 @@ class AdbClient:
         # untrusted values as operators or additional commands.
         return self.run(("shell", shlex.join(args)), timeout=timeout)
 
+    def boot_completed(self) -> bool:
+        return self.shell("getprop", "sys.boot_completed").strip() == "1"
+
+    def installed_package(
+        self, package: str, include_apk_sha256: bool = False
+    ) -> dict[str, str | int | dict[str, str] | None] | None:
+        """Read the current user's installed package version and optional APK hashes."""
+
+        installed = self.shell("pm", "list", "packages", "--user", "current", package)
+        if f"package:{package}" not in installed.splitlines():
+            return None
+
+        paths = self._apk_paths(package) if include_apk_sha256 else []
+        dump = self.shell("dumpsys", "package", package)
+        version_code = re.search(r"(?m)^\s*versionCode=(\d+)\b", dump)
+        if not version_code:
+            raise AdbError(f"Android did not report a version code for {package}")
+        version_name = re.search(r"(?m)^[ \t]*versionName=([^\r\n]*)", dump)
+        name = version_name[1].strip() if version_name else ""
+        hashes = self._apk_hashes(paths) if paths else None
+        if paths and paths != self._apk_paths(package):
+            raise AdbError(f"The installed APK paths for {package} changed during preflight; retry")
+        return {
+            "version_code": int(version_code[1]),
+            "version_name": name if name and name != "null" else None,
+            "apk_sha256": hashes,
+        }
+
+    def _apk_paths(self, package: str) -> list[str]:
+        output = self.shell("pm", "path", "--user", "current", package)
+        paths = sorted(
+            line.removeprefix("package:")
+            for line in output.splitlines()
+            if line.startswith("package:")
+        )
+        if not paths or any(
+            not path.startswith("/") or not path.endswith(".apk") for path in paths
+        ):
+            raise AdbError(f"Android did not report valid APK paths for {package}")
+        return paths
+
+    def _apk_hashes(self, paths: list[str]) -> dict[str, str]:
+        output = self.shell("sha256sum", *paths)
+        hashes = {
+            path: digest.lower()
+            for digest, path in re.findall(r"(?m)^([a-fA-F0-9]{64}) [ *]([^\r\n]+)$", output)
+        }
+        filenames = [path.rsplit("/", 1)[-1] for path in paths]
+        if set(hashes) != set(paths) or len(set(filenames)) != len(paths):
+            raise AdbError("Android did not report an unambiguous SHA-256 for each installed APK")
+        return {filename: hashes[path] for filename, path in zip(filenames, paths, strict=True)}
+
     def display_density(self) -> int:
         """Return the default display's effective density in DPI."""
         output = self.shell("wm", "density")
@@ -128,6 +180,25 @@ class AdbClient:
         if not densities:
             raise AdbError("Android did not report the display density")
         return int(densities[-1])
+
+    def start_accessibility_events(self) -> subprocess.Popen[bytes]:
+        """Start a time-limited, screenshot-free stream of accessibility events."""
+        try:
+            return subprocess.Popen(
+                self._command(
+                    (
+                        "shell",
+                        "-T",
+                        "timeout 15 sh -c 'echo JEV_EVENT_PID:$$; exec uiautomator events'",
+                    )
+                ),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=0,
+            )
+        except OSError as exc:
+            raise AdbError("Unable to start the Android accessibility event stream") from exc
 
     def activity_dump(self) -> str:
         """Return the activity manager task dump, which lists windowing modes."""

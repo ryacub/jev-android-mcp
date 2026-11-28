@@ -20,6 +20,7 @@ from jev_android_mcp.agent import completion_oracle_for_goal, run_jev
 from jev_android_mcp.gesture import plan_gesture
 from jev_android_mcp.models import Action, Observation, UiNode
 from jev_android_mcp.state import parse_observation, pinned_window, recents_card_labels
+from jev_android_mcp.toast import capture_toast
 
 LOGGER = logging.getLogger(__name__)
 PACKAGE_ENV = "ANDROID_APP_PACKAGE"
@@ -232,6 +233,40 @@ def device_list() -> list[dict[str, str]]:
     return [device.__dict__ for device in AdbClient.list_devices()]
 
 
+@mcp.tool(annotations=READ_ONLY)
+@_report_failures
+def android_preflight(
+    serial: str | None = None,
+    package: str | None = None,
+    include_apk_sha256: bool = False,
+) -> dict[str, Any]:
+    """Check boot readiness and the installed build for an allowed Android app.
+
+    Set include_apk_sha256 to hash base and split APKs on the device.
+    """
+
+    package = _validate_package(package or _configured_package())
+    client = _client(serial)
+    boot_completed = client.boot_completed()
+    installed = client.installed_package(package, include_apk_sha256) if boot_completed else None
+
+    if not boot_completed:
+        status = "booting"
+    elif installed is None:
+        status = "package_missing"
+    else:
+        status = "ready"
+
+    return {
+        "serial": client.serial,
+        "package": package,
+        "status": status,
+        "boot_completed": boot_completed,
+        "installed": installed is not None if boot_completed else None,
+        **(installed or {"version_code": None, "version_name": None, "apk_sha256": None}),
+    }
+
+
 def _observe(serial: str | None = None) -> dict[str, Any]:
     client = _client(serial)
     capture_started = time.perf_counter()
@@ -365,6 +400,7 @@ def _act(
     drag_to: list[float] | None = None,
     drag_ms: int = DEFAULT_DRAG_MS,
     gesture: list[dict[str, Any]] | None = None,
+    toast_timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     if scroll_direction not in SCROLL_DIRECTIONS:
         raise ValueError("scroll_direction must be 'up', 'down', 'left', or 'right'")
@@ -381,19 +417,26 @@ def _act(
     action = _find_action(cached, action_id)
     node = _find_node(cached, action.node_id)
 
+    if toast_timeout_seconds is not None:
+        if not 0.0 < toast_timeout_seconds <= 5.0:
+            raise ValueError("toast_timeout_seconds must be above 0 and at most 5")
+        if action.operation not in {"TAP", "LONG_PRESS"}:
+            raise ValueError("Toast capture is available for app taps and long presses only")
+
+    toast = None
     action_started = time.perf_counter()
-    if action.operation == "TAP":
+    if action.operation in {"TAP", "LONG_PRESS"}:
         if node is None:
-            raise ValueError("TAP action has no node")
+            raise ValueError(f"{action.operation} action has no node")
         x = (node.bounds.left + node.bounds.right) // 2
         y = (node.bounds.top + node.bounds.bottom) // 2
-        client.tap(x, y)
-    elif action.operation == "LONG_PRESS":
-        if node is None:
-            raise ValueError("LONG_PRESS action has no node")
-        x = (node.bounds.left + node.bounds.right) // 2
-        y = (node.bounds.top + node.bounds.bottom) // 2
-        client.long_press(x, y)
+        send = client.tap if action.operation == "TAP" else client.long_press
+        if toast_timeout_seconds is None:
+            send(x, y)
+        else:
+            if node.package not in _allowed_packages():
+                raise ValueError("Toast capture requires an action on a configured app")
+            toast = capture_toast(client, node.package, lambda: send(x, y), toast_timeout_seconds)
     elif action.operation == "EXPAND_PIP":
         if node is None:
             raise ValueError("EXPAND_PIP action has no node")
@@ -476,6 +519,7 @@ def _act(
         "action_id": action_id,
         "operation": action.operation,
         "next_observation": next_state,
+        **({"toast": toast} if toast is not None else {}),
         "timings_ms": {
             "action_ms": action_ms,
             "wait_ms": wait_ms,
@@ -499,8 +543,12 @@ def android_act(
     drag_to: list[float] | None = None,
     drag_ms: int = DEFAULT_DRAG_MS,
     gesture: list[dict[str, Any]] | None = None,
+    toast_timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Execute one bounded action from the latest exact UIAutomator observation.
+
+    For a tap or long press in a configured app, set toast_timeout_seconds to
+    watch for a toast from that app. This uses Android accessibility events.
 
     scroll_direction names the finger movement: "up" reveals content below, "left"
     reveals content to the right.
@@ -534,6 +582,7 @@ def android_act(
         drag_to,
         drag_ms,
         gesture,
+        toast_timeout_seconds,
     )
     return result | {"next_observation": _shape(result["next_observation"], detail)}
 
